@@ -29,8 +29,8 @@ let player;
 let showDebug = false;
 
 function preload() {
-  this.load.image("tiles", "../assets/tilesets/tuxmon-sample-32px-extruded.png");
-  this.load.tilemapTiledJSON("map", "../assets/tilemaps/tuxemon-town.json");
+  this.load.image("tiles", "../assets/tilemaps/Free_Version/Tilemap/Tilemap.png");
+  this.load.xml("map", "../assets/tilemaps/Free_Version/test.tmx");
 
   // An atlas is a way to pack multiple images together into one texture. I'm using it to load all
   // the player animations (walking left, walking right, etc.) in one image. For more info see:
@@ -41,27 +41,84 @@ function preload() {
 }
 
 function create() {
-  const map = this.make.tilemap({ key: "map" });
+  const mapXml = this.cache.xml.get("map");
+  const mapNode = mapXml.getElementsByTagName("map")[0];
+  const layerNodes = Array.from(mapNode.getElementsByTagName("layer"));
+  const objectNodes = mapNode.getElementsByTagName("object");
 
-  // Parameters are the name you gave the tileset in Tiled and then the key of the tileset image in
-  // Phaser's cache (i.e. the name you used in preload)
-  const tileset = map.addTilesetImage("tuxmon-sample-32px-extruded", "tiles");
+  const mapWidth = Number(mapNode.getAttribute("width"));
+  const mapHeight = Number(mapNode.getAttribute("height"));
+  const tileWidth = Number(mapNode.getAttribute("tilewidth"));
+  const tileHeight = Number(mapNode.getAttribute("tileheight"));
 
-  // Parameters: layer name (or index) from Tiled, tileset, x, y
-  const belowLayer = map.createLayer("Below Player", tileset, 0, 0);
-  const worldLayer = map.createLayer("World", tileset, 0, 0);
-  const aboveLayer = map.createLayer("Above Player", tileset, 0, 0);
+  const toLayerData = (layerNode) => {
+    const dataNode = layerNode.getElementsByTagName("data")[0];
+    const rawCsv = dataNode.textContent.replace(/\s+/g, "").split(",");
+    const layerData = [];
 
-  worldLayer.setCollisionByProperty({ collides: true });
+    for (let y = 0; y < mapHeight; y += 1) {
+      const rowStart = y * mapWidth;
+      const row = rawCsv
+        .slice(rowStart, rowStart + mapWidth)
+        .map(Number)
+        .map((tile) => (tile === 0 ? -1 : tile));
+      layerData.push(row);
+    }
 
-  // By default, everything gets depth sorted on the screen in the order we created things. Here, we
-  // want the "Above Player" layer to sit on top of the player, so we explicitly give it a depth.
-  // Higher depths will sit on top of lower depth objects.
-  aboveLayer.setDepth(10);
+    return layerData;
+  };
 
-  // Object layers in Tiled let you embed extra info into a map - like a spawn point or custom
-  // collision shapes. In the tmx file, there's an object layer with a point named "Spawn Point"
-  const spawnPoint = map.findObject("Objects", (obj) => obj.name === "Spawn Point");
+  const walkableLayerNode =
+    layerNodes.find((layer) => layer.getAttribute("name")?.toLowerCase() === "walkable") ||
+    layerNodes[0];
+  const collisionLayerNode = layerNodes.find(
+    (layer) => layer.getAttribute("name")?.toLowerCase() === "collision",
+  );
+
+  const walkableLayerData = toLayerData(walkableLayerNode);
+
+  const map = this.make.tilemap({
+    data: walkableLayerData,
+    tileWidth,
+    tileHeight,
+  });
+
+  const tileset = map.addTilesetImage("test", "tiles", tileWidth, tileHeight, 0, 0, 1);
+  const worldLayer = map.createLayer(0, tileset, 0, 0);
+  let collisionLayer = null;
+
+  if (collisionLayerNode) {
+    const collisionMap = this.make.tilemap({
+      data: toLayerData(collisionLayerNode),
+      tileWidth,
+      tileHeight,
+    });
+    const collisionTileset = collisionMap.addTilesetImage(
+      "test",
+      "tiles",
+      tileWidth,
+      tileHeight,
+      0,
+      0,
+      1,
+    );
+
+    collisionLayer = collisionMap.createLayer(0, collisionTileset, 0, 0);
+    collisionLayer.setVisible(true);
+    collisionLayer.setCollisionByExclusion([-1]);
+  }
+
+  let spawnPoint = { x: tileWidth, y: tileHeight };
+  for (let i = 0; i < objectNodes.length; i += 1) {
+    const obj = objectNodes[i];
+    if (obj.getAttribute("name") === "PlayerSpawn") {
+      spawnPoint = {
+        x: Number(obj.getAttribute("x")),
+        y: Number(obj.getAttribute("y")),
+      };
+      break;
+    }
+  }
 
   // Create a sprite with physics enabled via the physics system. The image used for the sprite has
   // a bit of whitespace, so I'm using setSize & setOffset to control the size of the player's body.
@@ -70,8 +127,10 @@ function create() {
     .setSize(30, 40)
     .setOffset(0, 24);
 
-  // Watch the player and worldLayer for collisions, for the duration of the scene:
-  this.physics.add.collider(player, worldLayer);
+  // Watch the player and collision layer for collisions, for the duration of the scene:
+  if (collisionLayer) {
+    this.physics.add.collider(player, collisionLayer);
+  }
 
   // Create the player's walking animations from the texture atlas. These are stored in the global
   // animation manager so any sprite can access them.
@@ -145,7 +204,7 @@ function create() {
 
     // Create worldLayer collision graphic above the player, but below the help text
     const graphics = this.add.graphics().setAlpha(0.75).setDepth(20);
-    worldLayer.renderDebug(graphics, {
+    (collisionLayer || worldLayer).renderDebug(graphics, {
       tileColor: null, // Color of non-colliding tiles
       collidingTileColor: new Phaser.Display.Color(243, 134, 48, 255), // Color of colliding tiles
       faceColor: new Phaser.Display.Color(40, 39, 37, 255), // Color of colliding face edges
