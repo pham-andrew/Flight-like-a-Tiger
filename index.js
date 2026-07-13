@@ -27,10 +27,16 @@ const game = new Phaser.Game(config);
 let cursors;
 let player;
 let showDebug = false;
+let dialogBox;
+let dialogPoints = [];
+let defaultDialogMessage = 'Arrow keys to move\nPress "D" to show hitboxes';
+let mapTileWidth = 32;
+let mapTileHeight = 32;
 
 function preload() {
-  this.load.image("tiles", "../assets/tilemaps/Free_Version/Tilemap/Tilemap.png");
-  this.load.xml("map", "../assets/tilemaps/Free_Version/test.tmx");
+  this.load.image("darktokyotilemap", "../assets/darktokyotilemap.png");
+  this.load.image("trainstation", "../assets/trainstation.png");
+  this.load.xml("map", "../assets/tilemapfile2.tmx");
 
   // An atlas is a way to pack multiple images together into one texture. I'm using it to load all
   // the player animations (walking left, walking right, etc.) in one image. For more info see:
@@ -43,6 +49,7 @@ function preload() {
 function create() {
   const mapXml = this.cache.xml.get("map");
   const mapNode = mapXml.getElementsByTagName("map")[0];
+  const tilesetNodes = Array.from(mapNode.getElementsByTagName("tileset"));
   const layerNodes = Array.from(mapNode.getElementsByTagName("layer"));
   const objectNodes = mapNode.getElementsByTagName("object");
 
@@ -50,6 +57,8 @@ function create() {
   const mapHeight = Number(mapNode.getAttribute("height"));
   const tileWidth = Number(mapNode.getAttribute("tilewidth"));
   const tileHeight = Number(mapNode.getAttribute("tileheight"));
+  mapTileWidth = tileWidth;
+  mapTileHeight = tileHeight;
 
   const toLayerData = (layerNode) => {
     const dataNode = layerNode.getElementsByTagName("data")[0];
@@ -68,56 +77,120 @@ function create() {
     return layerData;
   };
 
-  const walkableLayerNode =
-    layerNodes.find((layer) => layer.getAttribute("name")?.toLowerCase() === "walkable") ||
-    layerNodes[0];
-  const collisionLayerNode = layerNodes.find(
-    (layer) => layer.getAttribute("name")?.toLowerCase() === "collision",
-  );
+  const tilesetConfigs = tilesetNodes
+    .map((tilesetNode) => {
+      const name =
+        tilesetNode.getAttribute("name") ||
+        tilesetNode
+          .getAttribute("source")
+          ?.split("/")
+          .pop()
+          .replace(/\.tsx$/i, "");
 
-  const walkableLayerData = toLayerData(walkableLayerNode);
+      if (!name) {
+        return null;
+      }
 
-  const map = this.make.tilemap({
-    data: walkableLayerData,
-    tileWidth,
-    tileHeight,
-  });
-
-  const tileset = map.addTilesetImage("test", "tiles", tileWidth, tileHeight, 0, 0, 1);
-  const worldLayer = map.createLayer(0, tileset, 0, 0);
+      return {
+        name,
+        firstGid: Number(tilesetNode.getAttribute("firstgid") || 1),
+      };
+    })
+    .filter(Boolean);
+  let worldLayer = null;
   let collisionLayer = null;
+  let middleLayerDepth = null;
 
-  if (collisionLayerNode) {
-    const collisionMap = this.make.tilemap({
-      data: toLayerData(collisionLayerNode),
+  const getNodeProperty = (node, propertyName) => {
+    const propertiesNode = node.getElementsByTagName("properties")[0];
+    if (!propertiesNode) {
+      return null;
+    }
+
+    const propertyNodes = Array.from(propertiesNode.getElementsByTagName("property"));
+    const propertyNode = propertyNodes.find(
+      (prop) => prop.getAttribute("name")?.toLowerCase() === propertyName.toLowerCase(),
+    );
+
+    if (!propertyNode) {
+      return null;
+    }
+
+    return propertyNode.getAttribute("value") || propertyNode.textContent || null;
+  };
+
+  layerNodes.forEach((layerNode, index) => {
+    const layerMap = this.make.tilemap({
+      data: toLayerData(layerNode),
       tileWidth,
       tileHeight,
     });
-    const collisionTileset = collisionMap.addTilesetImage(
-      "test",
-      "tiles",
-      tileWidth,
-      tileHeight,
-      0,
-      0,
-      1,
-    );
+    const layerTilesets = tilesetConfigs
+      .map((tilesetConfig) =>
+        layerMap.addTilesetImage(
+          tilesetConfig.name,
+          tilesetConfig.name,
+          tileWidth,
+          tileHeight,
+          0,
+          0,
+          tilesetConfig.firstGid,
+        ),
+      )
+      .filter(Boolean);
 
-    collisionLayer = collisionMap.createLayer(0, collisionTileset, 0, 0);
-    collisionLayer.setVisible(true);
-    collisionLayer.setCollisionByExclusion([-1]);
-  }
+    const layer = layerMap.createLayer(0, layerTilesets, 0, 0);
+    layer.setVisible(true);
+    layer.setDepth(index);
+
+    if (!worldLayer) {
+      worldLayer = layer;
+    }
+
+    if (layerNode.getAttribute("name")?.toLowerCase() === "collision") {
+      collisionLayer = layer;
+      collisionLayer.setCollisionByExclusion([-1]);
+    }
+
+    if (layerNode.getAttribute("name")?.toLowerCase() === "middle") {
+      middleLayerDepth = index;
+    }
+  });
 
   let spawnPoint = { x: tileWidth, y: tileHeight };
+  dialogPoints = [];
+
   for (let i = 0; i < objectNodes.length; i += 1) {
     const obj = objectNodes[i];
-    if (obj.getAttribute("name") === "PlayerSpawn") {
+    const name = obj.getAttribute("name") || "";
+    if (name === "PlayerSpawn") {
       spawnPoint = {
         x: Number(obj.getAttribute("x")),
         y: Number(obj.getAttribute("y")),
       };
-      break;
+      continue;
     }
+
+    const message =
+      getNodeProperty(obj, "dialog") ||
+      getNodeProperty(obj, "string") ||
+      getNodeProperty(obj, "message") ||
+      getNodeProperty(obj, "text");
+
+    const hasDialogProperty = Boolean(message);
+    const isPointObject = obj.getElementsByTagName("point").length > 0;
+    if (!hasDialogProperty || !isPointObject) {
+      continue;
+    }
+
+    const x = Number(obj.getAttribute("x")) || 0;
+    const y = Number(obj.getAttribute("y")) || 0;
+
+    dialogPoints.push({
+      x,
+      y,
+      message,
+    });
   }
 
   // Create a sprite with physics enabled via the physics system. The image used for the sprite has
@@ -126,6 +199,10 @@ function create() {
     .sprite(spawnPoint.x, spawnPoint.y, "atlas", "misa-front")
     .setSize(30, 40)
     .setOffset(0, 24);
+
+  if (middleLayerDepth !== null) {
+    player.setDepth(middleLayerDepth + 0.5);
+  }
 
   // Watch the player and collision layer for collisions, for the duration of the scene:
   if (collisionLayer) {
@@ -182,13 +259,13 @@ function create() {
 
   const camera = this.cameras.main;
   camera.startFollow(player);
-  camera.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
+  camera.setBounds(0, 0, mapWidth * tileWidth, mapHeight * tileHeight);
 
   cursors = this.input.keyboard.createCursorKeys();
 
-  // Help text that has a "fixed" position on the screen
-  this.add
-    .text(16, 16, 'Arrow keys to move\nPress "D" to show hitboxes', {
+  // Dialog box text that has a fixed position on the screen
+  dialogBox = this.add
+    .text(16, 16, defaultDialogMessage, {
       font: "18px monospace",
       fill: "#000000",
       padding: { x: 20, y: 10 },
@@ -253,5 +330,21 @@ function update(time, delta) {
     else if (prevVelocity.x > 0) player.setTexture("atlas", "misa-right");
     else if (prevVelocity.y < 0) player.setTexture("atlas", "misa-back");
     else if (prevVelocity.y > 0) player.setTexture("atlas", "misa-front");
+  }
+
+  if (dialogBox) {
+    const playerX = player.body ? player.body.center.x : player.x;
+    const playerY = player.body ? player.body.center.y : player.y;
+    const activeDialogPoint = dialogPoints.find(
+      (point) =>
+        Math.abs(playerX - point.x) <= mapTileWidth * 0.5 &&
+        Math.abs(playerY - point.y) <= mapTileHeight * 0.5,
+    );
+
+    const nextMessage =
+      (activeDialogPoint && activeDialogPoint.message) || defaultDialogMessage;
+    if (dialogBox.text !== nextMessage) {
+      dialogBox.setText(nextMessage);
+    }
   }
 }
