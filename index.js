@@ -25,18 +25,42 @@ const config = {
 
 const game = new Phaser.Game(config);
 let cursors;
+let interactKey;
 let player;
 let showDebug = false;
 let dialogBox;
-let dialogPoints = [];
-let defaultDialogMessage = 'Arrow keys to move\nPress "D" to show hitboxes';
+let interactableNpcs = [];
+let activeDialogMessage = null;
+let defaultDialogMessage = 'Arrow keys to move\nPress "F" to interact\nPress "D" to show hitboxes';
 let mapTileWidth = 32;
 let mapTileHeight = 32;
+const mapFilePath = "../assets/town.tmx";
+const masterVolume = 0.5;
+const animaleseSoundFiles = ["hello.wav"];
+
+function normalizeDialogPrefix(value) {
+  return (value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+    .slice(0, 4);
+}
+
+function getAnimaleseSoundKey(filename) {
+  return `animalese-${filename.replace(/\.[^.]+$/u, "").toLowerCase()}`;
+}
 
 function preload() {
   this.load.image("darktokyotilemap", "../assets/darktokyotilemap.png");
+  this.load.image("osaka", "../assets/osaka.png");
   this.load.image("trainstation", "../assets/trainstation.png");
-  this.load.xml("map", "../assets/tilemapfile2.tmx");
+  this.load.xml("map", mapFilePath);
+  this.load.audio("town-bgm", "../assets/sounds/Lo-Fi Sunday Drive Main.wav");
+  animaleseSoundFiles.forEach((filename) => {
+    this.load.audio(
+      getAnimaleseSoundKey(filename),
+      `../assets/sounds/animalese/${filename}`,
+    );
+  });
 
   // An atlas is a way to pack multiple images together into one texture. I'm using it to load all
   // the player animations (walking left, walking right, etc.) in one image. For more info see:
@@ -47,7 +71,16 @@ function preload() {
 }
 
 function create() {
+  this.sound.setVolume(masterVolume);
+
   const mapXml = this.cache.xml.get("map");
+  const isTownMap = mapFilePath.toLowerCase().endsWith("town.tmx");
+
+  if (isTownMap) {
+    this.sound.stopByKey("town-bgm");
+    this.sound.play("town-bgm", { loop: true, volume: 0.5 });
+  }
+
   const mapNode = mapXml.getElementsByTagName("map")[0];
   const tilesetNodes = Array.from(mapNode.getElementsByTagName("tileset"));
   const layerNodes = Array.from(mapNode.getElementsByTagName("layer"));
@@ -99,7 +132,8 @@ function create() {
     .filter(Boolean);
   let worldLayer = null;
   let collisionLayer = null;
-  let middleLayerDepth = null;
+  let collisionLayerDepth = null;
+  let topLayerDepth = -1;
 
   const getNodeProperty = (node, propertyName) => {
     const propertiesNode = node.getElementsByTagName("properties")[0];
@@ -142,6 +176,7 @@ function create() {
     const layer = layerMap.createLayer(0, layerTilesets, 0, 0);
     layer.setVisible(true);
     layer.setDepth(index);
+    topLayerDepth = Math.max(topLayerDepth, index);
 
     if (!worldLayer) {
       worldLayer = layer;
@@ -149,24 +184,46 @@ function create() {
 
     if (layerNode.getAttribute("name")?.toLowerCase() === "collision") {
       collisionLayer = layer;
+      collisionLayerDepth = index;
       collisionLayer.setCollisionByExclusion([-1]);
-    }
-
-    if (layerNode.getAttribute("name")?.toLowerCase() === "middle") {
-      middleLayerDepth = index;
     }
   });
 
   let spawnPoint = { x: tileWidth, y: tileHeight };
-  dialogPoints = [];
+  let wizardNpc = null;
+  interactableNpcs = [];
+  activeDialogMessage = defaultDialogMessage;
 
   for (let i = 0; i < objectNodes.length; i += 1) {
     const obj = objectNodes[i];
     const name = obj.getAttribute("name") || "";
-    if (name === "PlayerSpawn") {
+    const type = obj.getAttribute("type") || "";
+    const normalizedName = name.toLowerCase();
+    const normalizedType = type.toLowerCase();
+    const isStartObject = [name, type].some(
+      (value) => value.toLowerCase() === "playerspawn" || value.toLowerCase() === "start",
+    );
+
+    if (isStartObject) {
       spawnPoint = {
         x: Number(obj.getAttribute("x")),
         y: Number(obj.getAttribute("y")),
+      };
+      continue;
+    }
+
+    const isWizardSpawnObject =
+      normalizedName === "wizardspawn" || normalizedType === "wizardspawn";
+
+    if (isWizardSpawnObject) {
+      wizardNpc = {
+        x: Number(obj.getAttribute("x")),
+        y: Number(obj.getAttribute("y")),
+        message:
+          getNodeProperty(obj, "dialog") ||
+          getNodeProperty(obj, "string") ||
+          getNodeProperty(obj, "message") ||
+          getNodeProperty(obj, "text"),
       };
       continue;
     }
@@ -186,7 +243,7 @@ function create() {
     const x = Number(obj.getAttribute("x")) || 0;
     const y = Number(obj.getAttribute("y")) || 0;
 
-    dialogPoints.push({
+    interactableNpcs.push({
       x,
       y,
       message,
@@ -200,8 +257,28 @@ function create() {
     .setSize(30, 40)
     .setOffset(0, 24);
 
-  if (middleLayerDepth !== null) {
-    player.setDepth(middleLayerDepth + 0.5);
+  if (collisionLayerDepth !== null) {
+    player.setDepth(collisionLayerDepth - 0.5);
+  } else if (topLayerDepth >= 0) {
+    player.setDepth(topLayerDepth + 1);
+  }
+
+  if (wizardNpc) {
+    const wizard = this.add.sprite(
+      wizardNpc.x,
+      wizardNpc.y,
+      "atlas",
+      "misa-front",
+    );
+
+    wizard.setDepth(player.depth);
+
+    interactableNpcs.push({
+      x: wizardNpc.x,
+      y: wizardNpc.y,
+      message: wizardNpc.message,
+      sprite: wizard,
+    });
   }
 
   // Watch the player and collision layer for collisions, for the duration of the scene:
@@ -262,10 +339,11 @@ function create() {
   camera.setBounds(0, 0, mapWidth * tileWidth, mapHeight * tileHeight);
 
   cursors = this.input.keyboard.createCursorKeys();
+  interactKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F);
 
   // Dialog box text that has a fixed position on the screen
   dialogBox = this.add
-    .text(16, 16, defaultDialogMessage, {
+    .text(16, 16, activeDialogMessage, {
       font: "18px monospace",
       fill: "#000000",
       padding: { x: 20, y: 10 },
@@ -335,16 +413,31 @@ function update(time, delta) {
   if (dialogBox) {
     const playerX = player.body ? player.body.center.x : player.x;
     const playerY = player.body ? player.body.center.y : player.y;
-    const activeDialogPoint = dialogPoints.find(
-      (point) =>
-        Math.abs(playerX - point.x) <= mapTileWidth * 0.5 &&
-        Math.abs(playerY - point.y) <= mapTileHeight * 0.5,
+    const nearbyNpc = interactableNpcs.find(
+      (npc) =>
+        Math.abs(playerX - npc.x) <= mapTileWidth &&
+        Math.abs(playerY - npc.y) <= mapTileHeight,
     );
 
-    const nextMessage =
-      (activeDialogPoint && activeDialogPoint.message) || defaultDialogMessage;
-    if (dialogBox.text !== nextMessage) {
-      dialogBox.setText(nextMessage);
+    if (nearbyNpc && Phaser.Input.Keyboard.JustDown(interactKey)) {
+      activeDialogMessage = nearbyNpc.message || defaultDialogMessage;
+
+      const dialogPrefix = normalizeDialogPrefix(nearbyNpc.message);
+      const matchingAnimaleseFile = animaleseSoundFiles.find(
+        (filename) => normalizeDialogPrefix(filename.replace(/\.[^.]+$/u, "")) === dialogPrefix,
+      );
+
+      if (matchingAnimaleseFile) {
+        const soundKey = getAnimaleseSoundKey(matchingAnimaleseFile);
+        this.sound.stopByKey(soundKey);
+        this.sound.play(soundKey);
+      }
+    } else if (!nearbyNpc) {
+      activeDialogMessage = defaultDialogMessage;
+    }
+
+    if (dialogBox.text !== activeDialogMessage) {
+      dialogBox.setText(activeDialogMessage);
     }
   }
 }

@@ -3,12 +3,28 @@
         "height": 4300,
         "width": 2
     },
-    "activeFile": "",
+    "activeFile": "town.tmx",
     "expandedProjectPaths": [
     ],
     "fileStates": {
         "citytilemap.tsx": {
-            "scaleInDock": 1,
+            "scaleInDock": 0.75,
+            "scaleInEditor": 1
+        },
+        "darktokyotilemap.tsx": {
+            "scaleInDock": 0.75,
+            "scaleInEditor": 1
+        },
+        "hometown.tsx": {
+            "scaleInDock": 0.75,
+            "scaleInEditor": 1
+        },
+        "osaka.tsx": {
+            "scaleInDock": 0.75,
+            "scaleInEditor": 1
+        },
+        "overgrownbackstreets.tsx": {
+            "scaleInDock": 0.75,
             "scaleInEditor": 1
         },
         "tilemapfile1.tmx": {
@@ -26,22 +42,53 @@
             "scaleInDock": 1
         },
         "tilemapfile2.tmx": {
+            "expandedObjectLayers": [
+                4
+            ],
             "scale": 1.0766666666666667,
             "selectedLayer": 0,
             "viewCenter": {
-                "x": 480.1857585139319,
+                "x": 320.43343653250776,
                 "y": 320.43343653250776
             }
+        },
+        "town.tmx": {
+            "scale": 1,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 500,
+                "y": -47
+            }
+        },
+        "trainstation.tsx": {
+            "scaleInDock": 0.75,
+            "scaleInEditor": 1
         }
     },
     "last.imagePath": "C:/Users/andre/Projects/Flight-like-a-Tiger/assets",
     "map.lastUsedFormat": "tmx",
     "openFiles": [
+        "hometown.tsx",
+        "citytilemap.tsx",
+        "darktokyotilemap.tsx",
+        "trainstation.tsx",
+        "overgrownbackstreets.tsx",
+        "osaka.tsx",
+        "tilemapfile2.tmx",
+        "town.tmx"
     ],
     "project": "untitled.tiled-project",
+    "property.type": "object",
     "recentFiles": [
-        "tilemapfile1.tmx",
-        "citytilemap.tsx"
+        "hometown.tsx",
+        "citytilemap.tsx",
+        "darktokyotilemap.tsx",
+        "trainstation.tsx",
+        "overgrownbackstreets.tsx",
+        "osaka.tsx",
+        "tilemapfile2.tmx",
+        "town.tmx",
+        "tilemapfile1.tmx"
     ],
     "tileset.lastUsedFormat": "tsx"
 }
