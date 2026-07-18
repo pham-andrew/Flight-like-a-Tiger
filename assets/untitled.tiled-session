@@ -46,18 +46,18 @@
                 4
             ],
             "scale": 1.0766666666666667,
-            "selectedLayer": 0,
+            "selectedLayer": 4,
             "viewCenter": {
                 "x": 320.43343653250776,
-                "y": 320.43343653250776
+                "y": 429.1021671826625
             }
         },
         "town.tmx": {
             "scale": 1,
-            "selectedLayer": 0,
+            "selectedLayer": 5,
             "viewCenter": {
                 "x": 500,
-                "y": -47
+                "y": 187
             }
         },
         "trainstation.tsx": {
@@ -80,13 +80,13 @@
     "project": "untitled.tiled-project",
     "property.type": "object",
     "recentFiles": [
+        "tilemapfile2.tmx",
         "hometown.tsx",
         "citytilemap.tsx",
         "darktokyotilemap.tsx",
         "trainstation.tsx",
         "overgrownbackstreets.tsx",
         "osaka.tsx",
-        "tilemapfile2.tmx",
         "town.tmx",
         "tilemapfile1.tmx"
     ],

@@ -28,25 +28,166 @@ let cursors;
 let interactKey;
 let player;
 let showDebug = false;
-let dialogBox;
+let consoleText;
 let interactableNpcs = [];
-let activeDialogMessage = null;
 let defaultDialogMessage = 'Arrow keys to move\nPress "F" to interact\nPress "D" to show hitboxes';
+let consoleHistory = [];
+let consoleScrollOffset = 0;
+let consoleInput = "";
+let isConsoleTyping = false;
+let commandKeyListener;
+const consoleVisibleLines = 3;
+const consoleMaxHistory = 250;
 let mapTileWidth = 32;
 let mapTileHeight = 32;
 const mapFilePath = "../assets/town.tmx";
 const masterVolume = 0.5;
-const animaleseSoundFiles = ["hello.wav"];
+const dialogSoundState = {
+  loaded: new Set(),
+  loading: new Set(),
+};
 
-function normalizeDialogPrefix(value) {
-  return (value || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "")
-    .slice(0, 4);
+function parseDialogMessage(rawMessage) {
+  const message = (rawMessage || "").trim();
+  const match = message.match(/^\[([^\]]+)\]\s*(.*)$/s);
+
+  if (!match) {
+    return {
+      text: message,
+      soundFilename: null,
+    };
+  }
+
+  return {
+    text: (match[2] || "").trim(),
+    soundFilename: match[1].trim(),
+  };
 }
 
 function getAnimaleseSoundKey(filename) {
   return `animalese-${filename.replace(/\.[^.]+$/u, "").toLowerCase()}`;
+}
+
+function normalizeDialogSoundFilename(filename) {
+  const trimmed = (filename || "").trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  return /\.[a-z0-9]+$/iu.test(trimmed) ? trimmed : `${trimmed}.wav`;
+}
+
+function playDialogSound(scene, filename) {
+  const normalizedFilename = normalizeDialogSoundFilename(filename);
+  if (!normalizedFilename) {
+    return;
+  }
+
+  const soundKey = getAnimaleseSoundKey(normalizedFilename);
+
+  if (scene.cache.audio.exists(soundKey)) {
+    scene.sound.stopByKey(soundKey);
+    scene.sound.play(soundKey);
+    return;
+  }
+
+  if (dialogSoundState.loading.has(soundKey)) {
+    return;
+  }
+
+  dialogSoundState.loading.add(soundKey);
+
+  scene.load.audio(soundKey, `../assets/sounds/animalese/${normalizedFilename}`);
+  scene.load.once(`filecomplete-audio-${soundKey}`, () => {
+    dialogSoundState.loading.delete(soundKey);
+    dialogSoundState.loaded.add(soundKey);
+    scene.sound.stopByKey(soundKey);
+    scene.sound.play(soundKey);
+  });
+  scene.load.once(`loaderror`, (fileObj) => {
+    if (fileObj?.key === soundKey) {
+      dialogSoundState.loading.delete(soundKey);
+    }
+  });
+  scene.load.start();
+}
+
+function getVisibleConsoleLines() {
+  const historyLineSlots = consoleVisibleLines - 1;
+  const historyEnd = Math.max(0, consoleHistory.length - consoleScrollOffset);
+  const historyStart = Math.max(0, historyEnd - historyLineSlots);
+  const visibleHistory = consoleHistory.slice(historyStart, historyEnd);
+  const paddedHistory = Array(Math.max(0, historyLineSlots - visibleHistory.length)).fill("");
+  const inputLine = isConsoleTyping
+    ? `> ${consoleInput}`
+    : "> (Press Enter to type)";
+  return [...paddedHistory, ...visibleHistory, inputLine];
+}
+
+function renderConsole() {
+  if (!consoleText) {
+    return;
+  }
+
+  consoleText.setText(getVisibleConsoleLines().join("\n"));
+}
+
+function appendConsoleMessage(message) {
+  const normalized = (message || "").trim();
+  if (!normalized) {
+    return;
+  }
+
+  normalized.split(/\r?\n/u).forEach((line) => {
+    const trimmedLine = line.trim();
+    if (trimmedLine) {
+      consoleHistory.push(trimmedLine);
+    }
+  });
+
+  if (consoleHistory.length > consoleMaxHistory) {
+    consoleHistory = consoleHistory.slice(consoleHistory.length - consoleMaxHistory);
+  }
+
+  consoleScrollOffset = 0;
+  renderConsole();
+}
+
+function executeConsoleCommand(rawInput) {
+  const input = rawInput.trim();
+  if (!input) {
+    return;
+  }
+
+  appendConsoleMessage(`> ${input}`);
+
+  if (!input.startsWith("/")) {
+    appendConsoleMessage('Commands must start with "/". Try /help.');
+    return;
+  }
+
+  const normalizedCommand = input.toLowerCase();
+
+  if (normalizedCommand === "/help") {
+    appendConsoleMessage("Available commands:");
+    appendConsoleMessage("/help - Show command list");
+    appendConsoleMessage("/clear - Clear console history");
+    return;
+  }
+
+  if (normalizedCommand === "/clear") {
+    consoleHistory = [];
+    appendConsoleMessage("Console cleared.");
+    return;
+  }
+
+  appendConsoleMessage(`Unknown command: ${input}`);
+}
+
+function updateConsoleScroll(delta) {
+  const maxScroll = Math.max(0, consoleHistory.length - (consoleVisibleLines - 1));
+  consoleScrollOffset = Phaser.Math.Clamp(consoleScrollOffset + delta, 0, maxScroll);
+  renderConsole();
 }
 
 function preload() {
@@ -55,12 +196,6 @@ function preload() {
   this.load.image("trainstation", "../assets/trainstation.png");
   this.load.xml("map", mapFilePath);
   this.load.audio("town-bgm", "../assets/sounds/Lo-Fi Sunday Drive Main.wav");
-  animaleseSoundFiles.forEach((filename) => {
-    this.load.audio(
-      getAnimaleseSoundKey(filename),
-      `../assets/sounds/animalese/${filename}`,
-    );
-  });
 
   // An atlas is a way to pack multiple images together into one texture. I'm using it to load all
   // the player animations (walking left, walking right, etc.) in one image. For more info see:
@@ -192,7 +327,10 @@ function create() {
   let spawnPoint = { x: tileWidth, y: tileHeight };
   let wizardNpc = null;
   interactableNpcs = [];
-  activeDialogMessage = defaultDialogMessage;
+  consoleHistory = [];
+  consoleInput = "";
+  isConsoleTyping = false;
+  consoleScrollOffset = 0;
 
   for (let i = 0; i < objectNodes.length; i += 1) {
     const obj = objectNodes[i];
@@ -216,14 +354,18 @@ function create() {
       normalizedName === "wizardspawn" || normalizedType === "wizardspawn";
 
     if (isWizardSpawnObject) {
-      wizardNpc = {
-        x: Number(obj.getAttribute("x")),
-        y: Number(obj.getAttribute("y")),
-        message:
-          getNodeProperty(obj, "dialog") ||
+      const parsedWizardDialog = parseDialogMessage(
+        getNodeProperty(obj, "dialog") ||
           getNodeProperty(obj, "string") ||
           getNodeProperty(obj, "message") ||
           getNodeProperty(obj, "text"),
+      );
+
+      wizardNpc = {
+        x: Number(obj.getAttribute("x")),
+        y: Number(obj.getAttribute("y")),
+        message: parsedWizardDialog.text,
+        soundFilename: parsedWizardDialog.soundFilename,
       };
       continue;
     }
@@ -233,6 +375,8 @@ function create() {
       getNodeProperty(obj, "string") ||
       getNodeProperty(obj, "message") ||
       getNodeProperty(obj, "text");
+
+    const parsedDialog = parseDialogMessage(message);
 
     const hasDialogProperty = Boolean(message);
     const isPointObject = obj.getElementsByTagName("point").length > 0;
@@ -246,7 +390,8 @@ function create() {
     interactableNpcs.push({
       x,
       y,
-      message,
+      message: parsedDialog.text,
+      soundFilename: parsedDialog.soundFilename,
     });
   }
 
@@ -277,6 +422,7 @@ function create() {
       x: wizardNpc.x,
       y: wizardNpc.y,
       message: wizardNpc.message,
+      soundFilename: wizardNpc.soundFilename,
       sprite: wizard,
     });
   }
@@ -341,19 +487,123 @@ function create() {
   cursors = this.input.keyboard.createCursorKeys();
   interactKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F);
 
-  // Dialog box text that has a fixed position on the screen
-  dialogBox = this.add
-    .text(16, 16, activeDialogMessage, {
-      font: "18px monospace",
-      fill: "#000000",
-      padding: { x: 20, y: 10 },
-      backgroundColor: "#ffffff",
-    })
+  const consoleHeight = 98;
+  const consoleWidth = this.scale.width - 24;
+  const consoleX = 12;
+  const consoleY = this.scale.height - consoleHeight - 12;
+
+  this.add
+    .rectangle(consoleX, consoleY, consoleWidth, consoleHeight, 0x0f0f0f, 0.85)
+    .setOrigin(0, 0)
+    .setStrokeStyle(2, 0x8dd3ff, 0.9)
     .setScrollFactor(0)
     .setDepth(30);
 
+  consoleText = this.add
+    .text(consoleX + 10, consoleY + 8, "", {
+      font: "16px monospace",
+      fill: "#e7f6ff",
+      lineSpacing: 6,
+      wordWrap: { width: consoleWidth - 20, useAdvancedWrap: true },
+    })
+    .setScrollFactor(0)
+    .setDepth(31);
+
+  appendConsoleMessage(defaultDialogMessage);
+
+  this.input.on("wheel", (pointer, gameObjects, deltaX, deltaY) => {
+    if (deltaY > 0) {
+      updateConsoleScroll(1);
+    } else if (deltaY < 0) {
+      updateConsoleScroll(-1);
+    }
+  });
+
+  if (commandKeyListener) {
+    this.input.keyboard.off("keydown", commandKeyListener);
+  }
+
+  commandKeyListener = (event) => {
+    if (!isConsoleTyping && event.key === "Enter") {
+      isConsoleTyping = true;
+      renderConsole();
+      event.preventDefault();
+      return;
+    }
+
+    if (event.key === "PageUp") {
+      updateConsoleScroll(1);
+      event.preventDefault();
+      return;
+    }
+
+    if (event.key === "PageDown") {
+      updateConsoleScroll(-1);
+      event.preventDefault();
+      return;
+    }
+
+    if (event.key === "Escape") {
+      consoleInput = "";
+      isConsoleTyping = false;
+      renderConsole();
+      return;
+    }
+
+    if (event.key === "Enter") {
+      if (!isConsoleTyping) {
+        return;
+      }
+
+      if (!consoleInput.trim()) {
+        isConsoleTyping = false;
+        renderConsole();
+        return;
+      }
+
+      executeConsoleCommand(consoleInput);
+      consoleInput = "";
+      isConsoleTyping = false;
+      renderConsole();
+      event.preventDefault();
+      return;
+    }
+
+    if (!isConsoleTyping) {
+      return;
+    }
+
+    if (event.key === "Backspace") {
+      if (!consoleInput) {
+        return;
+      }
+
+      consoleInput = consoleInput.slice(0, -1);
+      renderConsole();
+      event.preventDefault();
+      return;
+    }
+
+    const isTextKey = event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey;
+    if (!isTextKey) {
+      return;
+    }
+
+    consoleInput += event.key;
+    renderConsole();
+    event.preventDefault();
+  };
+
+  this.input.keyboard.on("keydown", commandKeyListener);
+
   // Debug graphics
-  this.input.keyboard.once("keydown-D", (event) => {
+  this.input.keyboard.on("keydown-D", () => {
+    if (showDebug || consoleInput.startsWith("/")) {
+      return;
+    }
+
+    showDebug = true;
+
     // Turn on physics debugging to show player's hitbox
     this.physics.world.createDebugGraphic();
 
@@ -410,7 +660,7 @@ function update(time, delta) {
     else if (prevVelocity.y > 0) player.setTexture("atlas", "misa-front");
   }
 
-  if (dialogBox) {
+  if (consoleText) {
     const playerX = player.body ? player.body.center.x : player.x;
     const playerY = player.body ? player.body.center.y : player.y;
     const nearbyNpc = interactableNpcs.find(
@@ -420,24 +670,8 @@ function update(time, delta) {
     );
 
     if (nearbyNpc && Phaser.Input.Keyboard.JustDown(interactKey)) {
-      activeDialogMessage = nearbyNpc.message || defaultDialogMessage;
-
-      const dialogPrefix = normalizeDialogPrefix(nearbyNpc.message);
-      const matchingAnimaleseFile = animaleseSoundFiles.find(
-        (filename) => normalizeDialogPrefix(filename.replace(/\.[^.]+$/u, "")) === dialogPrefix,
-      );
-
-      if (matchingAnimaleseFile) {
-        const soundKey = getAnimaleseSoundKey(matchingAnimaleseFile);
-        this.sound.stopByKey(soundKey);
-        this.sound.play(soundKey);
-      }
-    } else if (!nearbyNpc) {
-      activeDialogMessage = defaultDialogMessage;
-    }
-
-    if (dialogBox.text !== activeDialogMessage) {
-      dialogBox.setText(activeDialogMessage);
+      appendConsoleMessage(nearbyNpc.message || "...");
+      playDialogSound(this, nearbyNpc.soundFilename);
     }
   }
 }
