@@ -74,13 +74,11 @@
         "trainstation.tsx",
         "overgrownbackstreets.tsx",
         "osaka.tsx",
-        "tilemapfile2.tmx",
         "town.tmx"
     ],
     "project": "untitled.tiled-project",
     "property.type": "object",
     "recentFiles": [
-        "tilemapfile2.tmx",
         "hometown.tsx",
         "citytilemap.tsx",
         "darktokyotilemap.tsx",
@@ -88,6 +86,7 @@
         "overgrownbackstreets.tsx",
         "osaka.tsx",
         "town.tmx",
+        "tilemapfile2.tmx",
         "tilemapfile1.tmx"
     ],
     "tileset.lastUsedFormat": "tsx"

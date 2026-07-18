@@ -40,12 +40,41 @@ const consoleVisibleLines = 3;
 const consoleMaxHistory = 250;
 let mapTileWidth = 32;
 let mapTileHeight = 32;
+const inventory = new Map();
 const mapFilePath = "../assets/town.tmx";
 const masterVolume = 0.5;
 const dialogSoundState = {
   loaded: new Set(),
   loading: new Set(),
 };
+
+function addInventoryItem(itemName, amount = 1) {
+  const normalizedName = (itemName || "").trim();
+  const normalizedAmount = Number(amount);
+
+  if (!normalizedName || !Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
+    return false;
+  }
+
+  const currentAmount = inventory.get(normalizedName) || 0;
+  inventory.set(normalizedName, currentAmount + Math.floor(normalizedAmount));
+  return true;
+}
+
+function listInventoryLines() {
+  if (inventory.size === 0) {
+    return ["Inventory is empty."];
+  }
+
+  const lines = ["Inventory:"];
+  Array.from(inventory.entries())
+    .sort(([nameA], [nameB]) => nameA.localeCompare(nameB))
+    .forEach(([name, amount]) => {
+      lines.push(`- ${name}: ${amount}`);
+    });
+
+  return lines;
+}
 
 function parseDialogMessage(rawMessage) {
   const message = (rawMessage || "").trim();
@@ -166,18 +195,25 @@ function executeConsoleCommand(rawInput) {
     return;
   }
 
-  const normalizedCommand = input.toLowerCase();
+  const [command] = input.split(/\s+/u);
+  const normalizedCommand = command.toLowerCase();
 
   if (normalizedCommand === "/help") {
     appendConsoleMessage("Available commands:");
     appendConsoleMessage("/help - Show command list");
     appendConsoleMessage("/clear - Clear console history");
+    appendConsoleMessage("/inventory - Show inventory items and quantities");
     return;
   }
 
   if (normalizedCommand === "/clear") {
     consoleHistory = [];
     appendConsoleMessage("Console cleared.");
+    return;
+  }
+
+  if (normalizedCommand === "/inventory") {
+    listInventoryLines().forEach((line) => appendConsoleMessage(line));
     return;
   }
 
@@ -325,7 +361,7 @@ function create() {
   });
 
   let spawnPoint = { x: tileWidth, y: tileHeight };
-  let wizardNpc = null;
+  let headmasterNpc = null;
   interactableNpcs = [];
   consoleHistory = [];
   consoleInput = "";
@@ -350,22 +386,28 @@ function create() {
       continue;
     }
 
-    const isWizardSpawnObject =
-      normalizedName === "wizardspawn" || normalizedType === "wizardspawn";
+    const isHeadmasterSpawnObject =
+      normalizedName === "headmaster" ||
+      normalizedType === "headmaster" ||
+      normalizedName === "wizardspawn" ||
+      normalizedType === "wizardspawn";
 
-    if (isWizardSpawnObject) {
-      const parsedWizardDialog = parseDialogMessage(
+    if (isHeadmasterSpawnObject) {
+      const parsedHeadmasterDialog = parseDialogMessage(
         getNodeProperty(obj, "dialog") ||
           getNodeProperty(obj, "string") ||
           getNodeProperty(obj, "message") ||
           getNodeProperty(obj, "text"),
       );
 
-      wizardNpc = {
+      headmasterNpc = {
         x: Number(obj.getAttribute("x")),
         y: Number(obj.getAttribute("y")),
-        message: parsedWizardDialog.text,
-        soundFilename: parsedWizardDialog.soundFilename,
+        message: parsedHeadmasterDialog.text,
+        soundFilename: parsedHeadmasterDialog.soundFilename,
+        rewardItem: "Staff",
+        rewardAmount: 1,
+        rewardGiven: false,
       };
       continue;
     }
@@ -408,22 +450,25 @@ function create() {
     player.setDepth(topLayerDepth + 1);
   }
 
-  if (wizardNpc) {
-    const wizard = this.add.sprite(
-      wizardNpc.x,
-      wizardNpc.y,
+  if (headmasterNpc) {
+    const headmaster = this.add.sprite(
+      headmasterNpc.x,
+      headmasterNpc.y,
       "atlas",
       "misa-front",
     );
 
-    wizard.setDepth(player.depth);
+    headmaster.setDepth(player.depth);
 
     interactableNpcs.push({
-      x: wizardNpc.x,
-      y: wizardNpc.y,
-      message: wizardNpc.message,
-      soundFilename: wizardNpc.soundFilename,
-      sprite: wizard,
+      x: headmasterNpc.x,
+      y: headmasterNpc.y,
+      message: headmasterNpc.message,
+      soundFilename: headmasterNpc.soundFilename,
+      rewardItem: headmasterNpc.rewardItem,
+      rewardAmount: headmasterNpc.rewardAmount,
+      rewardGiven: headmasterNpc.rewardGiven,
+      sprite: headmaster,
     });
   }
 
@@ -671,6 +716,15 @@ function update(time, delta) {
 
     if (nearbyNpc && Phaser.Input.Keyboard.JustDown(interactKey)) {
       appendConsoleMessage(nearbyNpc.message || "...");
+
+      if (nearbyNpc.rewardItem && !nearbyNpc.rewardGiven) {
+        const rewardWasAdded = addInventoryItem(nearbyNpc.rewardItem, nearbyNpc.rewardAmount || 1);
+        if (rewardWasAdded) {
+          nearbyNpc.rewardGiven = true;
+          appendConsoleMessage(`Received ${nearbyNpc.rewardItem} x${nearbyNpc.rewardAmount || 1}.`);
+        }
+      }
+
       playDialogSound(this, nearbyNpc.soundFilename);
     }
   }

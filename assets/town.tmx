@@ -177,7 +177,7 @@
   <object id="1" name="Start" type="Start" x="367" y="142">
    <point/>
   </object>
-  <object id="2" name="WizardSpawn" x="240" y="204">
+  <object id="2" name="Headmaster" x="240" y="204">
    <properties>
     <property name="dialog" value="[hello.wav] hello"/>
    </properties>
