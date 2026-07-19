@@ -36,11 +36,17 @@ let consoleScrollOffset = 0;
 let consoleInput = "";
 let isConsoleTyping = false;
 let commandKeyListener;
-const consoleVisibleLines = 3;
+const consoleVisibleLines = 4;
 const consoleMaxHistory = 250;
 let mapTileWidth = 32;
 let mapTileHeight = 32;
 const inventory = new Map();
+const itemDefinitions = {
+  staffofmisfire: {
+    name: "Staff of Misfire",
+    description: "A Glock taped securely to the end of a broom handle.",
+  },
+};
 const mapFilePath = "../assets/town.tmx";
 const masterVolume = 0.5;
 const dialogSoundState = {
@@ -48,16 +54,40 @@ const dialogSoundState = {
   loading: new Set(),
 };
 
-function addInventoryItem(itemName, amount = 1) {
-  const normalizedName = (itemName || "").trim();
+function normalizeItemId(itemId) {
+  return (itemId || "").trim().toLowerCase();
+}
+
+function getItemDefinition(itemId) {
+  return itemDefinitions[normalizeItemId(itemId)] || null;
+}
+
+function getItemDefinitionByName(itemName) {
+  const normalizedName = (itemName || "").trim().toLowerCase();
+
+  if (!normalizedName) {
+    return null;
+  }
+
+  return (
+    Object.values(itemDefinitions).find((item) => item.name.toLowerCase() === normalizedName) || null
+  );
+}
+
+function addInventoryItem(itemId, amount = 1) {
+  const normalizedItemId = normalizeItemId(itemId);
   const normalizedAmount = Number(amount);
 
-  if (!normalizedName || !Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
+  if (!normalizedItemId || !Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
     return false;
   }
 
-  const currentAmount = inventory.get(normalizedName) || 0;
-  inventory.set(normalizedName, currentAmount + Math.floor(normalizedAmount));
+  if (!getItemDefinition(normalizedItemId)) {
+    return false;
+  }
+
+  const currentAmount = inventory.get(normalizedItemId) || 0;
+  inventory.set(normalizedItemId, currentAmount + Math.floor(normalizedAmount));
   return true;
 }
 
@@ -68,12 +98,52 @@ function listInventoryLines() {
 
   const lines = ["Inventory:"];
   Array.from(inventory.entries())
-    .sort(([nameA], [nameB]) => nameA.localeCompare(nameB))
-    .forEach(([name, amount]) => {
-      lines.push(`- ${name}: ${amount}`);
+    .sort(([itemIdA], [itemIdB]) => itemIdA.localeCompare(itemIdB))
+    .forEach(([itemId, amount]) => {
+      const itemDefinition = getItemDefinition(itemId);
+      lines.push(`- ${itemDefinition ? itemDefinition.name : itemId}: ${amount}`);
     });
 
   return lines;
+}
+
+function getInventoryItemAboutLines(itemName) {
+  const itemDefinition = getItemDefinitionByName(itemName);
+  if (!itemDefinition) {
+    return ["No item by that name is in your inventory."];
+  }
+
+  const inventoryEntry = Array.from(inventory.entries()).find(([itemId]) => {
+    const currentDefinition = getItemDefinition(itemId);
+    return currentDefinition && currentDefinition.name.toLowerCase() === itemDefinition.name.toLowerCase();
+  });
+
+  if (!inventoryEntry) {
+    return ["No item by that name is in your inventory."];
+  }
+
+  return [
+    `${itemDefinition.name}:`,
+    itemDefinition.description,
+    `You have ${inventoryEntry[1]}.`,
+  ];
+}
+
+function getInventoryItemNameByExactMatch(itemName) {
+  const normalizedName = (itemName || "").trim().toLowerCase();
+
+  if (!normalizedName) {
+    return null;
+  }
+
+  for (const [itemId] of inventory.entries()) {
+    const itemDefinition = getItemDefinition(itemId);
+    if (itemDefinition && itemDefinition.name.toLowerCase().startsWith(normalizedName)) {
+      return itemDefinition.name;
+    }
+  }
+
+  return null;
 }
 
 function parseDialogMessage(rawMessage) {
@@ -203,6 +273,7 @@ function executeConsoleCommand(rawInput) {
     appendConsoleMessage("/help - Show command list");
     appendConsoleMessage("/clear - Clear console history");
     appendConsoleMessage("/inventory - Show inventory items and quantities");
+    appendConsoleMessage("/about itemname - Show an inventory item's description");
     return;
   }
 
@@ -214,6 +285,18 @@ function executeConsoleCommand(rawInput) {
 
   if (normalizedCommand === "/inventory") {
     listInventoryLines().forEach((line) => appendConsoleMessage(line));
+    return;
+  }
+
+  if (normalizedCommand === "/about") {
+    const aboutTarget = input.slice(command.length).trim();
+
+    if (!aboutTarget) {
+      appendConsoleMessage("Usage: /about itemname");
+      return;
+    }
+
+    getInventoryItemAboutLines(aboutTarget).forEach((line) => appendConsoleMessage(line));
     return;
   }
 
@@ -232,6 +315,7 @@ function preload() {
   this.load.image("trainstation", "../assets/trainstation.png");
   this.load.xml("map", mapFilePath);
   this.load.audio("town-bgm", "../assets/sounds/Lo-Fi Sunday Drive Main.wav");
+  this.load.audio("gunshot", "../assets/sounds/gunshot.mp3");
 
   // An atlas is a way to pack multiple images together into one texture. I'm using it to load all
   // the player animations (walking left, walking right, etc.) in one image. For more info see:
@@ -405,7 +489,7 @@ function create() {
         y: Number(obj.getAttribute("y")),
         message: parsedHeadmasterDialog.text,
         soundFilename: parsedHeadmasterDialog.soundFilename,
-        rewardItem: "Staff",
+        rewardItem: "staffofmisfire",
         rewardAmount: 1,
         rewardGiven: false,
       };
@@ -595,6 +679,21 @@ function create() {
       return;
     }
 
+    if (event.key === "Tab") {
+      if (isConsoleTyping && consoleInput.toLowerCase().startsWith("/about ")) {
+        const aboutTarget = consoleInput.slice("/about".length).trim();
+        const completedItemName = getInventoryItemNameByExactMatch(aboutTarget);
+
+        if (completedItemName) {
+          consoleInput = `/about ${completedItemName}`;
+          renderConsole();
+        }
+      }
+
+      event.preventDefault();
+      return;
+    }
+
     if (event.key === "Enter") {
       if (!isConsoleTyping) {
         return;
@@ -643,7 +742,7 @@ function create() {
 
   // Debug graphics
   this.input.keyboard.on("keydown-D", () => {
-    if (showDebug || consoleInput.startsWith("/")) {
+    if (showDebug || isConsoleTyping || consoleInput.startsWith("/")) {
       return;
     }
 
@@ -663,6 +762,12 @@ function create() {
 }
 
 function update(time, delta) {
+  if (isConsoleTyping) {
+    player.body.setVelocity(0);
+    player.anims.stop();
+    return;
+  }
+
   const speed = 175;
   const prevVelocity = player.body.velocity.clone();
 
@@ -721,7 +826,13 @@ function update(time, delta) {
         const rewardWasAdded = addInventoryItem(nearbyNpc.rewardItem, nearbyNpc.rewardAmount || 1);
         if (rewardWasAdded) {
           nearbyNpc.rewardGiven = true;
-          appendConsoleMessage(`Received ${nearbyNpc.rewardItem} x${nearbyNpc.rewardAmount || 1}.`);
+          const rewardDefinition = getItemDefinition(nearbyNpc.rewardItem);
+          const rewardName = rewardDefinition ? rewardDefinition.name : nearbyNpc.rewardItem;
+          appendConsoleMessage(`Received ${rewardName} x${nearbyNpc.rewardAmount || 1}.`);
+
+          if (nearbyNpc.rewardItem === "staffofmisfire") {
+            this.sound.play("gunshot", { volume: 0.5 });
+          }
         }
       }
 
