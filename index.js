@@ -44,18 +44,23 @@ const consoleMaxHistory = 250;
 let mapTileWidth = 32;
 let mapTileHeight = 32;
 const inventory = new Map();
+let dialogPitchConfig = { default: 200 };
+const dialogSpeechState = {
+  lineToken: 0,
+  voices: new Set(),
+};
 const itemDefinitions = {
   staffofmisfire: {
     name: "Staff of Misfire",
     description: "A Glock taped securely to the end of a broom handle.",
   },
+  studentid: {
+    name: "Student ID",
+    description: "A hand penned piece of paper with the Tereura School of Magic Hanko Stamp.",
+  },
 };
 const mapFilePath = "../assets/town.tmx";
 const masterVolume = 0.5;
-const dialogSoundState = {
-  loaded: new Set(),
-  loading: new Set(),
-};
 const chapterDialogSoundState = {
   loaded: new Set(),
   loading: new Set(),
@@ -81,8 +86,179 @@ function getItemDefinitionByName(itemName) {
   );
 }
 
+function normalizeSpeakerName(speakerName) {
+  return (speakerName || "").trim().toLowerCase();
+}
+
+function getItemIdByName(itemName) {
+  const normalizedName = (itemName || "").trim().toLowerCase();
+
+  if (!normalizedName) {
+    return null;
+  }
+
+  const matchingEntry = Object.entries(itemDefinitions).find(
+    ([itemId, itemDefinition]) =>
+      itemId.toLowerCase() === normalizedName || itemDefinition.name.toLowerCase() === normalizedName,
+  );
+
+  return matchingEntry ? matchingEntry[0] : null;
+}
+
+function parseDialogPitchConfig(rawPitchText) {
+  const pitchConfig = { default: 200 };
+
+  (rawPitchText || "")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"))
+    .forEach((line) => {
+      const pitchMatch = line.match(/^([A-Za-z0-9_-]+)\s*[:=]\s*(-?\d+(?:\.\d+)?)$/u);
+      if (!pitchMatch) {
+        return;
+      }
+
+      const speakerName = normalizeSpeakerName(pitchMatch[1]);
+      const pitchValue = Number(pitchMatch[2]);
+
+      if (speakerName && Number.isFinite(pitchValue)) {
+        pitchConfig[speakerName] = pitchValue;
+      }
+    });
+
+  return pitchConfig;
+}
+
+function getDialogBasePitch(speakerName) {
+  const normalizedSpeakerName = normalizeSpeakerName(speakerName);
+  return dialogPitchConfig[normalizedSpeakerName] ?? dialogPitchConfig.default ?? 200;
+}
+
+function shortenAnimaleseText(script) {
+  return (script || "")
+    .replace(/[^a-z]/gi, " ")
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => (word.length > 1 ? `${word[0]}${word[word.length - 1]}` : word))
+    .join("");
+}
+
+function getAnimaleseCharacterTone(character, pitch) {
+  const upperCharacter = character.toUpperCase();
+  const letterIndex = upperCharacter.charCodeAt(0) - 65;
+  const normalizedPitch = Number.isFinite(pitch) ? pitch : 200;
+  const letterVariation = (letterIndex - 12) * 6;
+  const outputFrequency = Math.max(80, normalizedPitch + letterVariation);
+
+  return {
+    outputFrequency,
+    isVowel: /[AEIOU]/u.test(upperCharacter),
+  };
+}
+
+function playAnimaleseSyllable(scene, tone, startDelayMs, durationMs, lineToken) {
+  scene.time.delayedCall(startDelayMs, () => {
+    if (lineToken !== dialogSpeechState.lineToken) {
+      return;
+    }
+
+    const context = scene.sound?.context;
+    if (!context) {
+      return;
+    }
+
+    if (context.state === "suspended") {
+      context.resume();
+    }
+
+    const startTime = context.currentTime;
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    const filter = context.createBiquadFilter();
+
+    oscillator.type = tone.isVowel ? "triangle" : "square";
+    oscillator.frequency.setValueAtTime(tone.outputFrequency, startTime);
+
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(Math.max(180, tone.outputFrequency * 1.5), startTime);
+    filter.Q.setValueAtTime(1.0, startTime);
+
+    gain.gain.setValueAtTime(0.0001, startTime);
+    gain.gain.linearRampToValueAtTime(0.22, startTime + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startTime + durationMs / 1000);
+
+    oscillator.connect(filter);
+    filter.connect(gain);
+    gain.connect(context.destination);
+
+    const voice = { oscillator, filter, gain };
+    dialogSpeechState.voices.add(voice);
+
+    oscillator.onended = () => {
+      dialogSpeechState.voices.delete(voice);
+
+      try {
+        oscillator.disconnect();
+        filter.disconnect();
+        gain.disconnect();
+      } catch (_error) {
+        // Ignore disconnect errors from already-ended nodes.
+      }
+    };
+
+    oscillator.start(startTime);
+    oscillator.stop(startTime + durationMs / 1000 + 0.02);
+  });
+}
+
+function stopDialogSpeech() {
+  dialogSpeechState.lineToken += 1;
+
+  for (const voice of dialogSpeechState.voices) {
+    try {
+      voice.oscillator.stop();
+    } catch (_error) {
+      // Ignore nodes that have already finished.
+    }
+  }
+
+  dialogSpeechState.voices.clear();
+}
+
+function createSynthVoice(scene, frequency, oscillatorType, startDelayMs, durationMs, lineToken) {
+  // Kept for compatibility with the existing call shape during the reimplementation.
+  playAnimaleseSyllable(scene, { outputFrequency: frequency, isVowel: oscillatorType === "triangle" }, startDelayMs, durationMs, lineToken);
+}
+
+function playSynthesizedDialog(scene, dialogLine) {
+  const spokenText = (dialogLine?.spokenText || dialogLine?.text || "").trim();
+  if (!spokenText) {
+    return;
+  }
+
+  stopDialogSpeech();
+
+  const basePitch = getDialogBasePitch(dialogLine.speakerName);
+  const processedScript = shortenAnimaleseText(spokenText);
+  const lineToken = dialogSpeechState.lineToken;
+  let delayMs = 0;
+
+  for (let cIndex = 0; cIndex < processedScript.length; cIndex += 1) {
+    const character = processedScript.toUpperCase()[cIndex];
+    const isPronounceable = character >= "A" && character <= "Z";
+
+    if (isPronounceable) {
+      const tone = getAnimaleseCharacterTone(character, basePitch);
+      const outputLetterSecs = 0.0375;
+      createSynthVoice(scene, tone.outputFrequency, tone.isVowel ? "triangle" : "square", delayMs, outputLetterSecs * 1000, lineToken);
+    }
+
+    delayMs += 37.5;
+  }
+}
+
 function addInventoryItem(itemId, amount = 1) {
-  const normalizedItemId = normalizeItemId(itemId);
+  const normalizedItemId = getItemIdByName(itemId) || normalizeItemId(itemId);
   const normalizedAmount = Number(amount);
 
   if (!normalizedItemId || !Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
@@ -155,12 +331,52 @@ function getInventoryItemNameByExactMatch(itemName) {
 
 function parseDialogMessage(rawMessage) {
   const message = (rawMessage || "").trim();
+
+  const giveMatch = message.match(/^\[Give:\s*([^\]]+)\]$/iu);
+  if (giveMatch) {
+    return {
+      text: "",
+      soundFilename: null,
+      giveItemName: giveMatch[1].trim(),
+      speakerName: null,
+      spokenText: "",
+    };
+  }
+
+  const soundOnlyMatch = message.match(/^\[([^\]]+)\]$/u);
+  if (soundOnlyMatch) {
+    return {
+      text: "",
+      soundFilename: soundOnlyMatch[1].trim(),
+      giveItemName: null,
+      speakerName: null,
+      spokenText: "",
+    };
+  }
+
+  const speakerMatch = message.match(/^([^:\r\n]+):\s*(.+)$/u);
+  if (speakerMatch) {
+    const speakerName = speakerMatch[1].trim();
+    const spokenText = speakerMatch[2].trim();
+
+    return {
+      text: message,
+      soundFilename: null,
+      giveItemName: null,
+      speakerName,
+      spokenText,
+    };
+  }
+
   const match = message.match(/\[([^\]]+)\]/);
 
   if (!match) {
     return {
       text: message,
       soundFilename: null,
+      giveItemName: null,
+      speakerName: null,
+      spokenText: message,
     };
   }
 
@@ -169,6 +385,9 @@ function parseDialogMessage(rawMessage) {
   return {
     text: textWithoutSoundTag,
     soundFilename: match[1].trim(),
+    giveItemName: null,
+    speakerName: null,
+    spokenText: textWithoutSoundTag,
   };
 }
 
@@ -176,7 +395,54 @@ function parseDialogLines(rawDialogText) {
   return (rawDialogText || "")
     .split(/\r?\n/u)
     .map((line) => parseDialogMessage(line))
-    .filter((line) => Boolean(line.text || line.soundFilename));
+    .filter((line) => Boolean(line.text || line.soundFilename || line.giveItemName));
+}
+
+function handleDialogReward(scene, itemName, amount = 1) {
+  const normalizedAmount = Number(amount);
+  const rewardAmount = Number.isFinite(normalizedAmount) && normalizedAmount > 0 ? Math.floor(normalizedAmount) : 1;
+  const rewardItemId = getItemIdByName(itemName);
+
+  if (!rewardItemId || !addInventoryItem(rewardItemId, rewardAmount)) {
+    return false;
+  }
+
+  const rewardDefinition = getItemDefinition(rewardItemId);
+  const rewardName = rewardDefinition ? rewardDefinition.name : itemName;
+  appendConsoleMessage(`Received ${rewardName} x${rewardAmount}.`);
+
+  return true;
+}
+
+function playDialogSpeech(scene, dialogLine) {
+  if (!dialogLine) {
+    return;
+  }
+
+  if (dialogLine.speakerName || dialogLine.spokenText) {
+    playSynthesizedDialog(scene, dialogLine);
+    return;
+  }
+
+  if (dialogLine.soundFilename) {
+    playChapterDialogSound(scene, dialogLine.soundFilename);
+  }
+}
+
+function playChapterDialogLine(scene, dialogLine) {
+  if (!dialogLine) {
+    return;
+  }
+
+  if (dialogLine.text) {
+    appendConsoleMessage(dialogLine.text);
+  }
+
+  if (dialogLine.giveItemName) {
+    handleDialogReward(scene, dialogLine.giveItemName, 1);
+  }
+
+  playDialogSpeech(scene, dialogLine);
 }
 
 function beginChapterDialog(scene, npc, dialogLines) {
@@ -190,11 +456,7 @@ function beginChapterDialog(scene, npc, dialogLines) {
     index: 0,
   };
 
-  if (dialogLines[0].text) {
-    appendConsoleMessage(dialogLines[0].text);
-  }
-
-  playChapterDialogSound(scene, dialogLines[0].soundFilename);
+  playChapterDialogLine(scene, dialogLines[0]);
   return true;
 }
 
@@ -214,14 +476,26 @@ function advanceChapterDialog(scene) {
     return;
   }
 
-  appendConsoleSpacerLine();
-
   const nextLine = activeChapterDialog.lines[activeChapterDialog.index];
-  if (nextLine.text) {
-    appendConsoleMessage(nextLine.text);
+  if (nextLine.text || nextLine.soundFilename) {
+    appendConsoleSpacerLine();
   }
 
-  playChapterDialogSound(scene, nextLine.soundFilename);
+  playChapterDialogLine(scene, nextLine);
+
+  if (
+    nextLine.giveItemName &&
+    !nextLine.text &&
+    !nextLine.soundFilename &&
+    activeChapterDialog.index === activeChapterDialog.lines.length - 1
+  ) {
+    if (Number.isInteger(activeChapterDialog.npc?.chapterAfterDialog)) {
+      chapter = activeChapterDialog.npc.chapterAfterDialog;
+    }
+
+    activeChapterDialog = null;
+    renderConsole();
+  }
 }
 
 function getChapterDialogSoundKey(filename) {
@@ -259,54 +533,6 @@ function playChapterDialogSound(scene, filename) {
   scene.load.once("loaderror", (fileObj) => {
     if (fileObj?.key === soundKey) {
       chapterDialogSoundState.loading.delete(soundKey);
-    }
-  });
-  scene.load.start();
-}
-
-function getAnimaleseSoundKey(filename) {
-  return `animalese-${filename.replace(/\.[^.]+$/u, "").toLowerCase()}`;
-}
-
-function normalizeDialogSoundFilename(filename) {
-  const trimmed = (filename || "").trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  return /\.[a-z0-9]+$/iu.test(trimmed) ? trimmed : `${trimmed}.wav`;
-}
-
-function playDialogSound(scene, filename) {
-  const normalizedFilename = normalizeDialogSoundFilename(filename);
-  if (!normalizedFilename) {
-    return;
-  }
-
-  const soundKey = getAnimaleseSoundKey(normalizedFilename);
-
-  if (scene.cache.audio.exists(soundKey)) {
-    scene.sound.stopByKey(soundKey);
-    scene.sound.play(soundKey);
-    return;
-  }
-
-  if (dialogSoundState.loading.has(soundKey)) {
-    return;
-  }
-
-  dialogSoundState.loading.add(soundKey);
-
-  scene.load.audio(soundKey, `../assets/sounds/animalese/${normalizedFilename}`);
-  scene.load.once(`filecomplete-audio-${soundKey}`, () => {
-    dialogSoundState.loading.delete(soundKey);
-    dialogSoundState.loaded.add(soundKey);
-    scene.sound.stopByKey(soundKey);
-    scene.sound.play(soundKey);
-  });
-  scene.load.once(`loaderror`, (fileObj) => {
-    if (fileObj?.key === soundKey) {
-      dialogSoundState.loading.delete(soundKey);
     }
   });
   scene.load.start();
@@ -429,8 +655,8 @@ function preload() {
   this.load.image("trainstation", "../assets/trainstation.png");
   this.load.xml("map", mapFilePath);
   this.load.text("meet-headmaster-dialog", "../assets/dialog/MeetHeadmaster.txt");
+  this.load.text("dialog-pitch", "../assets/sounds/pitch.txt");
   this.load.audio("town-bgm", "../assets/sounds/Lo-Fi Sunday Drive Main.wav");
-  this.load.audio("gunshot", "../assets/sounds/gunshot.mp3");
 
   // An atlas is a way to pack multiple images together into one texture. I'm using it to load all
   // the player animations (walking left, walking right, etc.) in one image. For more info see:
@@ -445,6 +671,8 @@ function create() {
 
   const mapXml = this.cache.xml.get("map");
   const isTownMap = mapFilePath.toLowerCase().endsWith("town.tmx");
+  dialogPitchConfig = parseDialogPitchConfig(this.cache.text.get("dialog-pitch"));
+  stopDialogSpeech();
 
   if (isTownMap) {
     this.sound.stopByKey("town-bgm");
@@ -605,12 +833,11 @@ function create() {
         y: Number(obj.getAttribute("y")),
         message: parsedHeadmasterDialog.text,
         soundFilename: parsedHeadmasterDialog.soundFilename,
+        speakerName: parsedHeadmasterDialog.speakerName,
+        spokenText: parsedHeadmasterDialog.spokenText,
         chapterDialogLines: meetHeadmasterDialogLines,
         chapterForDialog: 0,
         chapterAfterDialog: 1,
-        rewardItem: "staffofmisfire",
-        rewardAmount: 1,
-        rewardGiven: false,
       };
       continue;
     }
@@ -637,6 +864,8 @@ function create() {
       y,
       message: parsedDialog.text,
       soundFilename: parsedDialog.soundFilename,
+      speakerName: parsedDialog.speakerName,
+      spokenText: parsedDialog.spokenText,
     });
   }
 
@@ -668,12 +897,11 @@ function create() {
       y: headmasterNpc.y,
       message: headmasterNpc.message,
       soundFilename: headmasterNpc.soundFilename,
+      speakerName: headmasterNpc.speakerName,
+      spokenText: headmasterNpc.spokenText,
       chapterDialogLines: headmasterNpc.chapterDialogLines,
       chapterForDialog: headmasterNpc.chapterForDialog,
       chapterAfterDialog: headmasterNpc.chapterAfterDialog,
-      rewardItem: headmasterNpc.rewardItem,
-      rewardAmount: headmasterNpc.rewardAmount,
-      rewardGiven: headmasterNpc.rewardGiven,
       sprite: headmaster,
     });
   }
@@ -764,9 +992,9 @@ function create() {
   appendConsoleMessage(defaultDialogMessage);
 
   this.input.on("wheel", (pointer, gameObjects, deltaX, deltaY) => {
-    if (deltaY > 0) {
+    if (deltaY < 0) {
       updateConsoleScroll(1);
-    } else if (deltaY < 0) {
+    } else if (deltaY > 0) {
       updateConsoleScroll(-1);
     }
   });
@@ -963,21 +1191,7 @@ function update(time, delta) {
         beginChapterDialog(this, nearbyNpc, nearbyNpc.chapterDialogLines);
       } else {
         appendConsoleMessage(nearbyNpc.message || "...");
-        playDialogSound(this, nearbyNpc.soundFilename);
-      }
-
-      if (nearbyNpc.rewardItem && !nearbyNpc.rewardGiven) {
-        const rewardWasAdded = addInventoryItem(nearbyNpc.rewardItem, nearbyNpc.rewardAmount || 1);
-        if (rewardWasAdded) {
-          nearbyNpc.rewardGiven = true;
-          const rewardDefinition = getItemDefinition(nearbyNpc.rewardItem);
-          const rewardName = rewardDefinition ? rewardDefinition.name : nearbyNpc.rewardItem;
-          appendConsoleMessage(`Received ${rewardName} x${nearbyNpc.rewardAmount || 1}.`);
-
-          if (nearbyNpc.rewardItem === "staffofmisfire") {
-            this.sound.play("gunshot", { volume: 0.5 });
-          }
-        }
+        playDialogSpeech(this, nearbyNpc);
       }
     }
   }

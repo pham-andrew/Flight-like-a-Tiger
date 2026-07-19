@@ -16,4 +16,8 @@ Ellie: You're the only magic school within two hours of me. Please let me in.
 
 Headmaster: You know what if it gets you out of my face...
 
+[Give: Student ID]
+
+[Give: Staff of Misfire]
+
 [gunshot.mp3]
