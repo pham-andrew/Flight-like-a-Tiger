@@ -26,10 +26,13 @@ const config = {
 const game = new Phaser.Game(config);
 let cursors;
 let interactKey;
+let spaceKey;
 let player;
 let showDebug = false;
 let consoleText;
 let interactableNpcs = [];
+let chapter = 0;
+let activeChapterDialog = null;
 let defaultDialogMessage = 'Arrow keys to move\nPress "F" to interact\nPress "D" to show hitboxes';
 let consoleHistory = [];
 let consoleScrollOffset = 0;
@@ -50,6 +53,10 @@ const itemDefinitions = {
 const mapFilePath = "../assets/town.tmx";
 const masterVolume = 0.5;
 const dialogSoundState = {
+  loaded: new Set(),
+  loading: new Set(),
+};
+const chapterDialogSoundState = {
   loaded: new Set(),
   loading: new Set(),
 };
@@ -148,7 +155,7 @@ function getInventoryItemNameByExactMatch(itemName) {
 
 function parseDialogMessage(rawMessage) {
   const message = (rawMessage || "").trim();
-  const match = message.match(/^\[([^\]]+)\]\s*(.*)$/s);
+  const match = message.match(/\[([^\]]+)\]/);
 
   if (!match) {
     return {
@@ -157,10 +164,104 @@ function parseDialogMessage(rawMessage) {
     };
   }
 
+  const textWithoutSoundTag = message.replace(match[0], "").trim();
+
   return {
-    text: (match[2] || "").trim(),
+    text: textWithoutSoundTag,
     soundFilename: match[1].trim(),
   };
+}
+
+function parseDialogLines(rawDialogText) {
+  return (rawDialogText || "")
+    .split(/\r?\n/u)
+    .map((line) => parseDialogMessage(line))
+    .filter((line) => Boolean(line.text || line.soundFilename));
+}
+
+function beginChapterDialog(scene, npc, dialogLines) {
+  if (!npc || !Array.isArray(dialogLines) || dialogLines.length === 0) {
+    return false;
+  }
+
+  activeChapterDialog = {
+    npc,
+    lines: dialogLines,
+    index: 0,
+  };
+
+  if (dialogLines[0].text) {
+    appendConsoleMessage(dialogLines[0].text);
+  }
+
+  playChapterDialogSound(scene, dialogLines[0].soundFilename);
+  return true;
+}
+
+function advanceChapterDialog(scene) {
+  if (!activeChapterDialog) {
+    return;
+  }
+
+  activeChapterDialog.index += 1;
+  if (activeChapterDialog.index >= activeChapterDialog.lines.length) {
+    if (Number.isInteger(activeChapterDialog.npc?.chapterAfterDialog)) {
+      chapter = activeChapterDialog.npc.chapterAfterDialog;
+    }
+
+    activeChapterDialog = null;
+    renderConsole();
+    return;
+  }
+
+  appendConsoleSpacerLine();
+
+  const nextLine = activeChapterDialog.lines[activeChapterDialog.index];
+  if (nextLine.text) {
+    appendConsoleMessage(nextLine.text);
+  }
+
+  playChapterDialogSound(scene, nextLine.soundFilename);
+}
+
+function getChapterDialogSoundKey(filename) {
+  const normalizedKey = (filename || "").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  return `chapter-dialog-${normalizedKey}`;
+}
+
+function playChapterDialogSound(scene, filename) {
+  const normalizedFilename = (filename || "").trim();
+  if (!normalizedFilename) {
+    return;
+  }
+
+  const soundKey = getChapterDialogSoundKey(normalizedFilename);
+
+  if (scene.cache.audio.exists(soundKey)) {
+    scene.sound.stopByKey(soundKey);
+    scene.sound.play(soundKey);
+    return;
+  }
+
+  if (chapterDialogSoundState.loading.has(soundKey)) {
+    return;
+  }
+
+  chapterDialogSoundState.loading.add(soundKey);
+
+  scene.load.audio(soundKey, `../assets/sounds/${normalizedFilename}`);
+  scene.load.once(`filecomplete-audio-${soundKey}`, () => {
+    chapterDialogSoundState.loading.delete(soundKey);
+    chapterDialogSoundState.loaded.add(soundKey);
+    scene.sound.stopByKey(soundKey);
+    scene.sound.play(soundKey);
+  });
+  scene.load.once("loaderror", (fileObj) => {
+    if (fileObj?.key === soundKey) {
+      chapterDialogSoundState.loading.delete(soundKey);
+    }
+  });
+  scene.load.start();
 }
 
 function getAnimaleseSoundKey(filename) {
@@ -217,9 +318,11 @@ function getVisibleConsoleLines() {
   const historyStart = Math.max(0, historyEnd - historyLineSlots);
   const visibleHistory = consoleHistory.slice(historyStart, historyEnd);
   const paddedHistory = Array(Math.max(0, historyLineSlots - visibleHistory.length)).fill("");
-  const inputLine = isConsoleTyping
-    ? `> ${consoleInput}`
-    : "> (Press Enter to type)";
+  const inputLine = activeChapterDialog
+    ? "Press Space to continue"
+    : isConsoleTyping
+      ? `> ${consoleInput}`
+      : "> (Press Enter to type)";
   return [...paddedHistory, ...visibleHistory, inputLine];
 }
 
@@ -243,6 +346,17 @@ function appendConsoleMessage(message) {
       consoleHistory.push(trimmedLine);
     }
   });
+
+  if (consoleHistory.length > consoleMaxHistory) {
+    consoleHistory = consoleHistory.slice(consoleHistory.length - consoleMaxHistory);
+  }
+
+  consoleScrollOffset = 0;
+  renderConsole();
+}
+
+function appendConsoleSpacerLine() {
+  consoleHistory.push("");
 
   if (consoleHistory.length > consoleMaxHistory) {
     consoleHistory = consoleHistory.slice(consoleHistory.length - consoleMaxHistory);
@@ -314,6 +428,7 @@ function preload() {
   this.load.image("osaka", "../assets/osaka.png");
   this.load.image("trainstation", "../assets/trainstation.png");
   this.load.xml("map", mapFilePath);
+  this.load.text("meet-headmaster-dialog", "../assets/dialog/MeetHeadmaster.txt");
   this.load.audio("town-bgm", "../assets/sounds/Lo-Fi Sunday Drive Main.wav");
   this.load.audio("gunshot", "../assets/sounds/gunshot.mp3");
 
@@ -340,6 +455,7 @@ function create() {
   const tilesetNodes = Array.from(mapNode.getElementsByTagName("tileset"));
   const layerNodes = Array.from(mapNode.getElementsByTagName("layer"));
   const objectNodes = mapNode.getElementsByTagName("object");
+  const meetHeadmasterDialogLines = parseDialogLines(this.cache.text.get("meet-headmaster-dialog"));
 
   const mapWidth = Number(mapNode.getAttribute("width"));
   const mapHeight = Number(mapNode.getAttribute("height"));
@@ -489,6 +605,9 @@ function create() {
         y: Number(obj.getAttribute("y")),
         message: parsedHeadmasterDialog.text,
         soundFilename: parsedHeadmasterDialog.soundFilename,
+        chapterDialogLines: meetHeadmasterDialogLines,
+        chapterForDialog: 0,
+        chapterAfterDialog: 1,
         rewardItem: "staffofmisfire",
         rewardAmount: 1,
         rewardGiven: false,
@@ -549,6 +668,9 @@ function create() {
       y: headmasterNpc.y,
       message: headmasterNpc.message,
       soundFilename: headmasterNpc.soundFilename,
+      chapterDialogLines: headmasterNpc.chapterDialogLines,
+      chapterForDialog: headmasterNpc.chapterForDialog,
+      chapterAfterDialog: headmasterNpc.chapterAfterDialog,
       rewardItem: headmasterNpc.rewardItem,
       rewardAmount: headmasterNpc.rewardAmount,
       rewardGiven: headmasterNpc.rewardGiven,
@@ -615,6 +737,7 @@ function create() {
 
   cursors = this.input.keyboard.createCursorKeys();
   interactKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F);
+  spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
 
   const consoleHeight = 98;
   const consoleWidth = this.scale.width - 24;
@@ -768,6 +891,17 @@ function update(time, delta) {
     return;
   }
 
+  if (activeChapterDialog) {
+    player.body.setVelocity(0);
+    player.anims.stop();
+
+    if (Phaser.Input.Keyboard.JustDown(spaceKey)) {
+      advanceChapterDialog(this);
+    }
+
+    return;
+  }
+
   const speed = 175;
   const prevVelocity = player.body.velocity.clone();
 
@@ -820,7 +954,17 @@ function update(time, delta) {
     );
 
     if (nearbyNpc && Phaser.Input.Keyboard.JustDown(interactKey)) {
-      appendConsoleMessage(nearbyNpc.message || "...");
+      const shouldUseChapterDialog =
+        Array.isArray(nearbyNpc.chapterDialogLines) &&
+        nearbyNpc.chapterDialogLines.length > 0 &&
+        chapter === nearbyNpc.chapterForDialog;
+
+      if (shouldUseChapterDialog) {
+        beginChapterDialog(this, nearbyNpc, nearbyNpc.chapterDialogLines);
+      } else {
+        appendConsoleMessage(nearbyNpc.message || "...");
+        playDialogSound(this, nearbyNpc.soundFilename);
+      }
 
       if (nearbyNpc.rewardItem && !nearbyNpc.rewardGiven) {
         const rewardWasAdded = addInventoryItem(nearbyNpc.rewardItem, nearbyNpc.rewardAmount || 1);
@@ -835,8 +979,6 @@ function update(time, delta) {
           }
         }
       }
-
-      playDialogSound(this, nearbyNpc.soundFilename);
     }
   }
 }
