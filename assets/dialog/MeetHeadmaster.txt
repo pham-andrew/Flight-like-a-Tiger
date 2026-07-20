@@ -2,7 +2,7 @@ Headmaster: WHO GOES THER- What are you wearing?
 
 Ellie: ... my witches robes, I want to enroll at Tereura.
 
-Headmaster: People really only wear those to graduation unless you're at a school like Harvworts. You look ridiculous.
+Headmaster: People really only wear those to graduation unless you're at like Harvworts. You look ridiculous.
 
 Ellie: Is this against the dress code?
 
@@ -14,10 +14,40 @@ Headmaster: It is, we seized the school as an asset after the last headmaster fa
 
 Ellie: You're the only magic school within two hours of me. Please let me in.
 
-Headmaster: You know what if it gets you out of my face...
+Headmaster: We're a FOR PROFIT INSTITUTION.
+
+Ellie: I have my tuition payment ready.
+
+Headmaster: You're gullible enough to attend a for profit school? Umm, the hanko must still be in this desk somewhere.
+
+[Take: Swankle, 10000]
 
 [Give: Student ID]
 
+Headmaster: Well, alright. Show me some magic.
+
+Ellie: ...
+
+Headmaster: Don't be shy.
+
+Ellie: I can't do any magic. I want to learn.
+
+Headmaster: Oh, well, we're more of a pracitcum based learning establishment... Umm, the easiest way to use magic is through a magical item. Leme go to the back...
+
 [Give: Staff of Misfire]
 
+Ellie: This is just-
+
+Headmaster: Your first magic staff. A big moment for a young mage. You can inspect it later by typing "/about Staff of Misfire" into the console.
+
+Headmaster: Now you'll need to demonstrate three skills in front of the board for the graduation exam. My niece cheated her way through by using magic items. Go find some of those.
+
+Ellie: But what about class? And my professors?
+
+Headmaster: You don't need no class. The gang -I mean staff- are around town. They'll give you good lessons in the school of hard knocks to really prepare you for life.
+
 [gunshot.mp3]
+
+Ellie: A-
+
+Headmaster: Keep that thing pointed away from me.

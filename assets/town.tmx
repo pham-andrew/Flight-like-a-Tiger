@@ -179,7 +179,7 @@
   </object>
   <object id="2" name="Headmaster" x="240" y="204">
    <properties>
-    <property name="dialog" value="[hello.wav] hello"/>
+    <property name="dialog" value="Headmaster: Have you found three magic items yet?"/>
    </properties>
    <point/>
   </object>

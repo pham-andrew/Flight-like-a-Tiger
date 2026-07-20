@@ -4,6 +4,8 @@
  *  - Tuxemon, https://github.com/Tuxemon/Tuxemon
  */
 
+import { itemDefinitions } from "./item-definitions.js";
+
 const config = {
   type: Phaser.AUTO,
   width: 800,
@@ -41,6 +43,7 @@ let isConsoleTyping = false;
 let commandKeyListener;
 const consoleVisibleLines = 4;
 const consoleMaxHistory = 250;
+const consoleFallbackWrapCharacterLimit = 78;
 let mapTileWidth = 32;
 let mapTileHeight = 32;
 const inventory = new Map();
@@ -48,16 +51,6 @@ let dialogPitchConfig = { default: 200 };
 const dialogSpeechState = {
   lineToken: 0,
   voices: new Set(),
-};
-const itemDefinitions = {
-  staffofmisfire: {
-    name: "Staff of Misfire",
-    description: "A Glock taped securely to the end of a broom handle.",
-  },
-  studentid: {
-    name: "Student ID",
-    description: "A hand penned piece of paper with the Tereura School of Magic Hanko Stamp.",
-  },
 };
 const mapFilePath = "../assets/town.tmx";
 const masterVolume = 0.5;
@@ -274,6 +267,31 @@ function addInventoryItem(itemId, amount = 1) {
   return true;
 }
 
+function removeInventoryItem(itemId, amount = 1) {
+  const normalizedItemId = getItemIdByName(itemId) || normalizeItemId(itemId);
+  const normalizedAmount = Number(amount);
+
+  if (!normalizedItemId || !Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
+    return false;
+  }
+
+  const currentAmount = inventory.get(normalizedItemId) || 0;
+  const removalAmount = Math.floor(normalizedAmount);
+
+  if (currentAmount < removalAmount) {
+    return false;
+  }
+
+  const nextAmount = currentAmount - removalAmount;
+  if (nextAmount > 0) {
+    inventory.set(normalizedItemId, nextAmount);
+  } else {
+    inventory.delete(normalizedItemId);
+  }
+
+  return true;
+}
+
 function listInventoryLines() {
   if (inventory.size === 0) {
     return ["Inventory is empty."];
@@ -338,6 +356,23 @@ function parseDialogMessage(rawMessage) {
       text: "",
       soundFilename: null,
       giveItemName: giveMatch[1].trim(),
+      giveItemAmount: 1,
+      takeItemName: null,
+      takeItemAmount: null,
+      speakerName: null,
+      spokenText: "",
+    };
+  }
+
+  const takeMatch = message.match(/^\[Take:\s*([^,\]]+?)(?:\s*,\s*(\d+))?\]$/iu);
+  if (takeMatch) {
+    return {
+      text: "",
+      soundFilename: null,
+      giveItemName: null,
+      giveItemAmount: null,
+      takeItemName: takeMatch[1].trim(),
+      takeItemAmount: Number(takeMatch[2] || 1),
       speakerName: null,
       spokenText: "",
     };
@@ -349,6 +384,9 @@ function parseDialogMessage(rawMessage) {
       text: "",
       soundFilename: soundOnlyMatch[1].trim(),
       giveItemName: null,
+      giveItemAmount: null,
+      takeItemName: null,
+      takeItemAmount: null,
       speakerName: null,
       spokenText: "",
     };
@@ -363,6 +401,9 @@ function parseDialogMessage(rawMessage) {
       text: message,
       soundFilename: null,
       giveItemName: null,
+      giveItemAmount: null,
+      takeItemName: null,
+      takeItemAmount: null,
       speakerName,
       spokenText,
     };
@@ -375,6 +416,9 @@ function parseDialogMessage(rawMessage) {
       text: message,
       soundFilename: null,
       giveItemName: null,
+      giveItemAmount: null,
+      takeItemName: null,
+      takeItemAmount: null,
       speakerName: null,
       spokenText: message,
     };
@@ -386,6 +430,9 @@ function parseDialogMessage(rawMessage) {
     text: textWithoutSoundTag,
     soundFilename: match[1].trim(),
     giveItemName: null,
+    giveItemAmount: null,
+    takeItemName: null,
+    takeItemAmount: null,
     speakerName: null,
     spokenText: textWithoutSoundTag,
   };
@@ -395,7 +442,7 @@ function parseDialogLines(rawDialogText) {
   return (rawDialogText || "")
     .split(/\r?\n/u)
     .map((line) => parseDialogMessage(line))
-    .filter((line) => Boolean(line.text || line.soundFilename || line.giveItemName));
+    .filter((line) => Boolean(line.text || line.soundFilename || line.giveItemName || line.takeItemName));
 }
 
 function handleDialogReward(scene, itemName, amount = 1) {
@@ -410,6 +457,22 @@ function handleDialogReward(scene, itemName, amount = 1) {
   const rewardDefinition = getItemDefinition(rewardItemId);
   const rewardName = rewardDefinition ? rewardDefinition.name : itemName;
   appendConsoleMessage(`Received ${rewardName} x${rewardAmount}.`);
+
+  return true;
+}
+
+function handleDialogTake(scene, itemName, amount = 1) {
+  const normalizedAmount = Number(amount);
+  const takeAmount = Number.isFinite(normalizedAmount) && normalizedAmount > 0 ? Math.floor(normalizedAmount) : 1;
+  const targetItemId = getItemIdByName(itemName);
+
+  if (!targetItemId || !removeInventoryItem(targetItemId, takeAmount)) {
+    return false;
+  }
+
+  const itemDefinition = getItemDefinition(targetItemId);
+  const itemLabel = itemDefinition ? itemDefinition.name : itemName;
+  appendConsoleMessage(`Lost ${itemLabel} x${takeAmount}.`);
 
   return true;
 }
@@ -429,6 +492,10 @@ function playDialogSpeech(scene, dialogLine) {
   }
 }
 
+function isVisibleChapterDialogLine(dialogLine) {
+  return Boolean(dialogLine && dialogLine.text);
+}
+
 function playChapterDialogLine(scene, dialogLine) {
   if (!dialogLine) {
     return;
@@ -439,10 +506,52 @@ function playChapterDialogLine(scene, dialogLine) {
   }
 
   if (dialogLine.giveItemName) {
-    handleDialogReward(scene, dialogLine.giveItemName, 1);
+    handleDialogReward(scene, dialogLine.giveItemName, dialogLine.giveItemAmount || 1);
+  }
+
+  if (dialogLine.takeItemName) {
+    handleDialogTake(scene, dialogLine.takeItemName, dialogLine.takeItemAmount || 1);
   }
 
   playDialogSpeech(scene, dialogLine);
+}
+
+function advanceChapterDialogToNextVisibleLine(scene) {
+  if (!activeChapterDialog) {
+    return;
+  }
+
+  while (activeChapterDialog.index < activeChapterDialog.lines.length) {
+    const currentLine = activeChapterDialog.lines[activeChapterDialog.index];
+    const isVisibleLine = isVisibleChapterDialogLine(currentLine);
+
+    if (currentLine.giveItemName && !isVisibleLine) {
+      handleDialogReward(scene, currentLine.giveItemName, currentLine.giveItemAmount || 1);
+    }
+
+    if (currentLine.takeItemName && !isVisibleLine) {
+      handleDialogTake(scene, currentLine.takeItemName, currentLine.takeItemAmount || 1);
+    }
+
+    if (currentLine.soundFilename && !isVisibleLine) {
+      playDialogSpeech(scene, currentLine);
+    }
+
+    if (isVisibleLine) {
+      playChapterDialogLine(scene, currentLine);
+      activeChapterDialog.visibleLineCount += 1;
+      return;
+    }
+
+    activeChapterDialog.index += 1;
+  }
+
+  if (Number.isInteger(activeChapterDialog.npc?.chapterAfterDialog)) {
+    chapter = activeChapterDialog.npc.chapterAfterDialog;
+  }
+
+  activeChapterDialog = null;
+  renderConsole();
 }
 
 function beginChapterDialog(scene, npc, dialogLines) {
@@ -454,9 +563,10 @@ function beginChapterDialog(scene, npc, dialogLines) {
     npc,
     lines: dialogLines,
     index: 0,
+    visibleLineCount: 0,
   };
 
-  playChapterDialogLine(scene, dialogLines[0]);
+  advanceChapterDialogToNextVisibleLine(scene);
   return true;
 }
 
@@ -466,36 +576,7 @@ function advanceChapterDialog(scene) {
   }
 
   activeChapterDialog.index += 1;
-  if (activeChapterDialog.index >= activeChapterDialog.lines.length) {
-    if (Number.isInteger(activeChapterDialog.npc?.chapterAfterDialog)) {
-      chapter = activeChapterDialog.npc.chapterAfterDialog;
-    }
-
-    activeChapterDialog = null;
-    renderConsole();
-    return;
-  }
-
-  const nextLine = activeChapterDialog.lines[activeChapterDialog.index];
-  if (nextLine.text || nextLine.soundFilename) {
-    appendConsoleSpacerLine();
-  }
-
-  playChapterDialogLine(scene, nextLine);
-
-  if (
-    nextLine.giveItemName &&
-    !nextLine.text &&
-    !nextLine.soundFilename &&
-    activeChapterDialog.index === activeChapterDialog.lines.length - 1
-  ) {
-    if (Number.isInteger(activeChapterDialog.npc?.chapterAfterDialog)) {
-      chapter = activeChapterDialog.npc.chapterAfterDialog;
-    }
-
-    activeChapterDialog = null;
-    renderConsole();
-  }
+  advanceChapterDialogToNextVisibleLine(scene);
 }
 
 function getChapterDialogSoundKey(filename) {
@@ -545,7 +626,7 @@ function getVisibleConsoleLines() {
   const visibleHistory = consoleHistory.slice(historyStart, historyEnd);
   const paddedHistory = Array(Math.max(0, historyLineSlots - visibleHistory.length)).fill("");
   const inputLine = activeChapterDialog
-    ? "Press Space to continue"
+    ? "(Press Space to continue)"
     : isConsoleTyping
       ? `> ${consoleInput}`
       : "> (Press Enter to type)";
@@ -560,16 +641,75 @@ function renderConsole() {
   consoleText.setText(getVisibleConsoleLines().join("\n"));
 }
 
+function getConsoleWrapCharacterLimit() {
+  if (!consoleText) {
+    return consoleFallbackWrapCharacterLimit;
+  }
+
+  const wrapWidth = Number(consoleText.style.wordWrapWidth) || 0;
+  const fontSize = Number.parseFloat(consoleText.style.fontSize) || 16;
+  const estimatedCharacterWidth = fontSize * 0.56;
+
+  if (!wrapWidth || !estimatedCharacterWidth) {
+    return consoleFallbackWrapCharacterLimit;
+  }
+
+  return Math.max(10, Math.floor(wrapWidth / estimatedCharacterWidth));
+}
+
+function wrapConsoleLine(line, characterLimit) {
+  const words = line.split(/\s+/u);
+  const wrappedLines = [];
+  let currentLine = "";
+
+  words.forEach((word) => {
+    if (!word) {
+      return;
+    }
+
+    if (word.length > characterLimit) {
+      if (currentLine) {
+        wrappedLines.push(currentLine);
+        currentLine = "";
+      }
+
+      for (let i = 0; i < word.length; i += characterLimit) {
+        wrappedLines.push(word.slice(i, i + characterLimit));
+      }
+
+      return;
+    }
+
+    const candidateLine = currentLine ? `${currentLine} ${word}` : word;
+    if (candidateLine.length > characterLimit && currentLine) {
+      wrappedLines.push(currentLine);
+      currentLine = word;
+    } else {
+      currentLine = candidateLine;
+    }
+  });
+
+  if (currentLine) {
+    wrappedLines.push(currentLine);
+  }
+
+  return wrappedLines.length > 0 ? wrappedLines : [""];
+}
+
 function appendConsoleMessage(message) {
   const normalized = (message || "").trim();
   if (!normalized) {
     return;
   }
 
+  const wrapCharacterLimit = getConsoleWrapCharacterLimit();
+
   normalized.split(/\r?\n/u).forEach((line) => {
     const trimmedLine = line.trim();
     if (trimmedLine) {
-      consoleHistory.push(trimmedLine);
+      wrapConsoleLine(trimmedLine, wrapCharacterLimit).forEach((wrappedLine) => {
+        consoleHistory.push(wrappedLine);
+      });
     }
   });
 
@@ -791,6 +931,8 @@ function create() {
   let spawnPoint = { x: tileWidth, y: tileHeight };
   let headmasterNpc = null;
   interactableNpcs = [];
+  inventory.clear();
+  addInventoryItem("swankle", 10000);
   consoleHistory = [];
   consoleInput = "";
   isConsoleTyping = false;
@@ -984,8 +1126,8 @@ function create() {
       font: "16px monospace",
       fill: "#e7f6ff",
       lineSpacing: 6,
-      wordWrap: { width: consoleWidth - 20, useAdvancedWrap: true },
     })
+    .setWordWrapWidth(consoleWidth - 20, false)
     .setScrollFactor(0)
     .setDepth(31);
 
