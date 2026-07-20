@@ -35,15 +35,27 @@ let consoleText;
 let interactableNpcs = [];
 let chapter = 0;
 let activeChapterDialog = null;
-let defaultDialogMessage = 'Arrow keys to move\nPress "F" to interact\nPress "D" to show hitboxes';
+let defaultDialogMessage = 'Arrow keys to move\nPress "F" to interact\nFind the headmaster';
 let consoleHistory = [];
 let consoleScrollOffset = 0;
 let consoleInput = "";
 let isConsoleTyping = false;
 let commandKeyListener;
+let playerFacingDirection = "south";
 const consoleVisibleLines = 4;
 const consoleMaxHistory = 250;
 const consoleFallbackWrapCharacterLimit = 78;
+const playerScale = 1;
+const femaleStudentFrames = {
+  idle: [1, 2, 3, 4],
+  north: [1, 2, 3, 4, 5, 6, 7, 8],
+  south: [1, 2, 3, 4, 5, 6, 7, 8],
+  west: [1, 2, 3, 4, 5, 6, 7, 8],
+  east: [1, 2, 3, 4, 5, 6, 7, 8],
+};
+const femaleStudentIdleDefaultFrame = 1;
+const femaleStudentIdleBackFrame = 2;
+const femaleStudentIdleSideFrame = 3;
 let mapTileWidth = 32;
 let mapTileHeight = 32;
 const inventory = new Map();
@@ -53,7 +65,7 @@ const dialogSpeechState = {
   voices: new Set(),
 };
 const mapFilePath = "../assets/town.tmx";
-const masterVolume = 0.5;
+const masterVolume = 0.3;
 const chapterDialogSoundState = {
   loaded: new Set(),
   loading: new Set(),
@@ -790,9 +802,44 @@ function updateConsoleScroll(delta) {
 }
 
 function preload() {
+  const femaleStudentFolder = "../assets/femalestudent";
+
   this.load.image("darktokyotilemap", "../assets/darktokyotilemap.png");
   this.load.image("osaka", "../assets/osaka.png");
   this.load.image("trainstation", "../assets/trainstation.png");
+  this.load.image("male-punk", "../assets/Malepunk1.png");
+
+  femaleStudentFrames.idle.forEach((frame) => {
+    this.load.image(
+      `player-idle-${frame}`,
+      `${femaleStudentFolder}/Idle/Femalestudent${frame}.png`,
+    );
+  });
+  femaleStudentFrames.north.forEach((frame) => {
+    this.load.image(
+      `player-walk-north-${frame}`,
+      `${femaleStudentFolder}/WalkingNorth/Femalestudentwalkingnorth${frame}.png`,
+    );
+  });
+  femaleStudentFrames.south.forEach((frame) => {
+    this.load.image(
+      `player-walk-south-${frame}`,
+      `${femaleStudentFolder}/WalkingSouth/Femalestudentwalkingsouth${frame}.png`,
+    );
+  });
+  femaleStudentFrames.west.forEach((frame) => {
+    this.load.image(
+      `player-walk-west-${frame}`,
+      `${femaleStudentFolder}/WalkingWest/Femalestudentwalkingwest${frame}.png`,
+    );
+  });
+  femaleStudentFrames.east.forEach((frame) => {
+    this.load.image(
+      `player-walk-east-${frame}`,
+      `${femaleStudentFolder}/WalkingEast/Femalestudentwalkingeast${frame}.png`,
+    );
+  });
+
   this.load.xml("map", mapFilePath);
   this.load.text("meet-headmaster-dialog", "../assets/dialog/MeetHeadmaster.txt");
   this.load.text("dialog-pitch", "../assets/sounds/pitch.txt");
@@ -1014,9 +1061,10 @@ function create() {
   // Create a sprite with physics enabled via the physics system. The image used for the sprite has
   // a bit of whitespace, so I'm using setSize & setOffset to control the size of the player's body.
   player = this.physics.add
-    .sprite(spawnPoint.x, spawnPoint.y, "atlas", "misa-front")
+    .sprite(spawnPoint.x, spawnPoint.y, `player-idle-${femaleStudentIdleDefaultFrame}`)
+    .setScale(playerScale)
     .setSize(30, 40)
-    .setOffset(0, 24);
+    .setOffset(0, 8);
 
   if (collisionLayerDepth !== null) {
     player.setDepth(collisionLayerDepth - 0.5);
@@ -1028,8 +1076,7 @@ function create() {
     const headmaster = this.add.sprite(
       headmasterNpc.x,
       headmasterNpc.y,
-      "atlas",
-      "misa-front",
+      "male-punk",
     );
 
     headmaster.setDepth(player.depth);
@@ -1057,47 +1104,27 @@ function create() {
   // animation manager so any sprite can access them.
   const anims = this.anims;
   anims.create({
-    key: "misa-left-walk",
-    frames: anims.generateFrameNames("atlas", {
-      prefix: "misa-left-walk.",
-      start: 0,
-      end: 3,
-      zeroPad: 3,
-    }),
-    frameRate: 10,
+    key: "player-walk-east",
+    frames: femaleStudentFrames.east.map((frame) => ({ key: `player-walk-east-${frame}` })),
+    frameRate: 20,
     repeat: -1,
   });
   anims.create({
-    key: "misa-right-walk",
-    frames: anims.generateFrameNames("atlas", {
-      prefix: "misa-right-walk.",
-      start: 0,
-      end: 3,
-      zeroPad: 3,
-    }),
-    frameRate: 10,
+    key: "player-walk-north",
+    frames: femaleStudentFrames.north.map((frame) => ({ key: `player-walk-north-${frame}` })),
+    frameRate: 20,
     repeat: -1,
   });
   anims.create({
-    key: "misa-front-walk",
-    frames: anims.generateFrameNames("atlas", {
-      prefix: "misa-front-walk.",
-      start: 0,
-      end: 3,
-      zeroPad: 3,
-    }),
-    frameRate: 10,
+    key: "player-walk-south",
+    frames: femaleStudentFrames.south.map((frame) => ({ key: `player-walk-south-${frame}` })),
+    frameRate: 20,
     repeat: -1,
   });
   anims.create({
-    key: "misa-back-walk",
-    frames: anims.generateFrameNames("atlas", {
-      prefix: "misa-back-walk.",
-      start: 0,
-      end: 3,
-      zeroPad: 3,
-    }),
-    frameRate: 10,
+    key: "player-walk-west",
+    frames: femaleStudentFrames.west.map((frame) => ({ key: `player-walk-west-${frame}` })),
+    frameRate: 20,
     repeat: -1,
   });
 
@@ -1255,15 +1282,40 @@ function create() {
 }
 
 function update(time, delta) {
+  const applyIdlePose = () => {
+    player.anims.stop();
+
+    if (playerFacingDirection === "north") {
+      player.setFlipX(false);
+      player.setTexture(`player-idle-${femaleStudentIdleBackFrame}`);
+      return;
+    }
+
+    if (playerFacingDirection === "east") {
+      player.setFlipX(false);
+      player.setTexture(`player-idle-${femaleStudentIdleSideFrame}`);
+      return;
+    }
+
+    if (playerFacingDirection === "west") {
+      player.setFlipX(true);
+      player.setTexture(`player-idle-${femaleStudentIdleSideFrame}`);
+      return;
+    }
+
+    player.setFlipX(false);
+    player.setTexture(`player-idle-${femaleStudentIdleDefaultFrame}`);
+  };
+
   if (isConsoleTyping) {
     player.body.setVelocity(0);
-    player.anims.stop();
+    applyIdlePose();
     return;
   }
 
   if (activeChapterDialog) {
     player.body.setVelocity(0);
-    player.anims.stop();
+    applyIdlePose();
 
     if (Phaser.Input.Keyboard.JustDown(spaceKey)) {
       advanceChapterDialog(this);
@@ -1273,8 +1325,6 @@ function update(time, delta) {
   }
 
   const speed = 175;
-  const prevVelocity = player.body.velocity.clone();
-
   // Stop any previous movement from the last frame
   player.body.setVelocity(0);
 
@@ -1295,23 +1345,25 @@ function update(time, delta) {
   // Normalize and scale the velocity so that player can't move faster along a diagonal
   player.body.velocity.normalize().scale(speed);
 
-  // Update the animation last and give left/right animations precedence over up/down animations
-  if (cursors.left.isDown) {
-    player.anims.play("misa-left-walk", true);
-  } else if (cursors.right.isDown) {
-    player.anims.play("misa-right-walk", true);
-  } else if (cursors.up.isDown) {
-    player.anims.play("misa-back-walk", true);
+  // Update animation and facing with vertical input taking precedence.
+  if (cursors.up.isDown) {
+    playerFacingDirection = "north";
+    player.setFlipX(false);
+    player.anims.play("player-walk-north", true);
   } else if (cursors.down.isDown) {
-    player.anims.play("misa-front-walk", true);
+    playerFacingDirection = "south";
+    player.setFlipX(false);
+    player.anims.play("player-walk-south", true);
+  } else if (cursors.left.isDown) {
+    playerFacingDirection = "west";
+    player.setFlipX(false);
+    player.anims.play("player-walk-west", true);
+  } else if (cursors.right.isDown) {
+    playerFacingDirection = "east";
+    player.setFlipX(false);
+    player.anims.play("player-walk-east", true);
   } else {
-    player.anims.stop();
-
-    // If we were moving, pick and idle frame to use
-    if (prevVelocity.x < 0) player.setTexture("atlas", "misa-left");
-    else if (prevVelocity.x > 0) player.setTexture("atlas", "misa-right");
-    else if (prevVelocity.y < 0) player.setTexture("atlas", "misa-back");
-    else if (prevVelocity.y > 0) player.setTexture("atlas", "misa-front");
+    applyIdlePose();
   }
 
   if (consoleText) {

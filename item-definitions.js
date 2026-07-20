@@ -11,4 +11,12 @@ export const itemDefinitions = {
     name: "Swankle",
     description: "Paper currency.",
   },
+  ringofhindsight: {
+    name: "Ring of Hindsight",
+    description: "Gives the optimal solution when that information is no longer valuable.",
+  },
+  problemsolver: {
+    name: "Problem Solver",
+    description: "A medieval hand cannon. Accuracy optional.",
+  },
 };

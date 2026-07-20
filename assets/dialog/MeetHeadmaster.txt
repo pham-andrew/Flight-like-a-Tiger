@@ -1,30 +1,26 @@
-Headmaster: WHO GOES THER- What are you wearing?
+Headmaster: WHO GOES THERE
 
-Ellie: ... my witches robes, I want to enroll at Tereura.
+Ellie: I want to enroll at Tereura.
 
-Headmaster: People really only wear those to graduation unless you're at like Harvworts. You look ridiculous.
-
-Ellie: Is this against the dress code?
-
-Headmaster: We don't have a dress code. Look I don't know how you found this place but-
+Headmaster: You've got the wrong place.
 
 Ellie: Is this Tereura School of Magic?
 
-Headmaster: It is, we seized the school as an asset after the last headmaster failed to pay back a loan.
+Headmaster: We seized the school as an asset after the last headmaster failed to pay back a loan. It was a for profit institution.
 
 Ellie: You're the only magic school within two hours of me. Please let me in.
 
-Headmaster: We're a FOR PROFIT INSTITUTION.
+Headmaster: Didn't you hear me? It was a scam. They paid off the accreditors. 
 
 Ellie: I have my tuition payment ready.
 
-Headmaster: You're gullible enough to attend a for profit school? Umm, the hanko must still be in this desk somewhere.
+Headmaster: Oh, why didn't you just say so? That school hanko must still be somewhere.
 
 [Take: Swankle, 10000]
 
 [Give: Student ID]
 
-Headmaster: Well, alright. Show me some magic.
+Headmaster: Well, alright. Let's see what you got.
 
 Ellie: ...
 
@@ -32,7 +28,11 @@ Headmaster: Don't be shy.
 
 Ellie: I can't do any magic. I want to learn.
 
-Headmaster: Oh, well, we're more of a pracitcum based learning establishment... Umm, the easiest way to use magic is through a magical item. Leme go to the back...
+Headmaster: We believe in more practicum based learning from the university of life and the school of hard knocks, none of that bookworm stuff.
+
+Ellie: Are you saying that ironically or?
+
+Headmaster: Look, everyone on the street knows the easiest way to use magic is through a magical item. Leme check the back...
 
 [Give: Staff of Misfire]
 
@@ -44,7 +44,7 @@ Headmaster: Now you'll need to demonstrate three skills in front of the board fo
 
 Ellie: But what about class? And my professors?
 
-Headmaster: You don't need no class. The gang -I mean staff- are around town. They'll give you good lessons in the school of hard knocks to really prepare you for life.
+Headmaster: You don't need no class. The gang -I mean staff- are around town "helping" the community. Go give them a hand.
 
 [gunshot.mp3]
 
