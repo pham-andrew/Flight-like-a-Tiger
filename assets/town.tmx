@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<map version="1.10" tiledversion="1.11.2" orientation="orthogonal" renderorder="right-down" width="30" height="30" tilewidth="32" tileheight="32" infinite="0" nextlayerid="8" nextobjectid="3">
+<map version="1.10" tiledversion="1.11.2" orientation="orthogonal" renderorder="right-down" width="30" height="30" tilewidth="32" tileheight="32" infinite="0" nextlayerid="8" nextobjectid="5">
  <tileset firstgid="1" source="osaka.tsx"/>
  <tileset firstgid="904" source="trainstation.tsx"/>
  <tileset firstgid="1624" source="darktokyotilemap.tsx"/>
@@ -181,6 +181,9 @@
    <properties>
     <property name="dialog" value="Headmaster: Have you found three magic items yet?"/>
    </properties>
+   <point/>
+  </object>
+  <object id="3" name="VendingMachine" x="16" y="913">
    <point/>
   </object>
  </objectgroup>

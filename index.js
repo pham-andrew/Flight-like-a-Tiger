@@ -5,6 +5,7 @@
  */
 
 import { itemDefinitions } from "./item-definitions.js";
+import characters from "./characters.js";
 
 const config = {
   type: Phaser.AUTO,
@@ -1010,12 +1011,15 @@ function create() {
       normalizedType === "wizardspawn";
 
     if (isHeadmasterSpawnObject) {
-      const parsedHeadmasterDialog = parseDialogMessage(
+      const headmasterCharacter = characters.headmaster || {};
+      const headmasterDialogSource =
         getNodeProperty(obj, "dialog") ||
-          getNodeProperty(obj, "string") ||
-          getNodeProperty(obj, "message") ||
-          getNodeProperty(obj, "text"),
-      );
+        getNodeProperty(obj, "string") ||
+        getNodeProperty(obj, "message") ||
+        getNodeProperty(obj, "text") ||
+        headmasterCharacter.dialog ||
+        "";
+      const parsedHeadmasterDialog = parseDialogMessage(headmasterDialogSource);
 
       headmasterNpc = {
         x: Number(obj.getAttribute("x")),
@@ -1027,6 +1031,7 @@ function create() {
         chapterDialogLines: meetHeadmasterDialogLines,
         chapterForDialog: 0,
         chapterAfterDialog: 1,
+        spriteKey: headmasterCharacter.sprite || "male-punk",
       };
       continue;
     }
@@ -1063,11 +1068,11 @@ function create() {
   player = this.physics.add
     .sprite(spawnPoint.x, spawnPoint.y, `player-idle-${femaleStudentIdleDefaultFrame}`)
     .setScale(playerScale)
-    .setSize(30, 40)
-    .setOffset(0, 8);
+    .setSize(15, 16)
+    .setOffset(8, 16);
 
   if (collisionLayerDepth !== null) {
-    player.setDepth(collisionLayerDepth - 0.5);
+    player.setDepth(collisionLayerDepth + 1);
   } else if (topLayerDepth >= 0) {
     player.setDepth(topLayerDepth + 1);
   }
@@ -1076,7 +1081,7 @@ function create() {
     const headmaster = this.add.sprite(
       headmasterNpc.x,
       headmasterNpc.y,
-      "male-punk",
+      headmasterNpc.spriteKey || "male-punk",
     );
 
     headmaster.setDepth(player.depth);
